@@ -14,27 +14,56 @@ def get_secret(name: str) -> str:
         return value
     return os.environ.get(name, "")
 
-def norm_json_value(x):
+def norm_json_value(v):
+    # Convert common pandas, numpy, datetime types into JSON safe primitives
     try:
-        if pd.isna(x):
-            return None
+        import pandas as pd
+        import numpy as np
     except Exception:
-        pass
-    if isinstance(x, (np.integer,)):
-        return int(x)
-    if isinstance(x, (np.floating, float)):
+        pd = None
+        np = None
+
+    # Missing values
+    if v is None:
+        return None
+    if pd is not None:
         try:
-            if float(x) != float(x):
+            if pd.isna(v):
                 return None
         except Exception:
             pass
-        return float(x)
-    if isinstance(x, datetime):
-        return x.isoformat()
-    if isinstance(x, date):
-        return x.isoformat()
-    return x
 
+    # pandas Timestamp, numpy datetime64
+    if pd is not None and isinstance(v, getattr(pd, "Timestamp", ())):
+        if pd.isna(v):
+            return None
+        return v.to_pydatetime().date().isoformat() if v.time() == datetime.time(0,0) else v.to_pydatetime().isoformat()
+    if np is not None and isinstance(v, getattr(np, "datetime64", ())):
+        try:
+            ts = pd.to_datetime(v) if pd is not None else None
+            if ts is not None and pd.isna(ts):
+                return None
+            return ts.to_pydatetime().isoformat() if ts is not None else str(v)
+        except Exception:
+            return str(v)
+
+    # Python datetime and date
+    if isinstance(v, datetime.datetime):
+        return v.isoformat()
+    if isinstance(v, datetime.date):
+        return v.isoformat()
+
+    # Numpy scalar types
+    if np is not None and isinstance(v, (np.integer, np.floating, np.bool_)):
+        return v.item()
+
+    # Lists and dicts
+    if isinstance(v, list):
+        return [norm_json_value(x) for x in v]
+    if isinstance(v, dict):
+        return {k: norm_json_value(x) for k, x in v.items()}
+
+    return v
 def norm_date_value(x):
     try:
         if pd.isna(x):
@@ -163,19 +192,22 @@ def db_fetch_table(supabase, table_name):
 def db_upsert_rows(supabase, table_name, rows, pk):
     if rows is None:
         return
+
     rows2 = []
     for r in rows:
         if r is None:
             continue
-        rows2.append(r)
+        # Ensure every value is JSON safe (dates, timestamps, NaT, numpy scalars)
+        r2 = {k: norm_json_value(v) for k, v in dict(r).items()}
+        rows2.append(r2)
+
     if len(rows2) == 0:
         return
+
     try:
         supabase.table(table_name).upsert(rows2, on_conflict=pk).execute()
-    except Exception as e:
+    except Exception:
         st.error(f"Database write error for {table_name}")
-        st.write(str(e))
-        st.stop()
 
 def db_replace_member_settings(supabase, member, settings_row, leave_dates):
     # Upsert settings
