@@ -156,7 +156,15 @@ st.markdown(
       .calendar-table { border-collapse: collapse; width: 100%; table-layout: fixed; }
       .calendar-table th { text-align: left; font-size: 0.82rem; padding: 8px; color: var(--ink-2); border-bottom: 1px solid var(--line); }
       .calendar-table td { vertical-align: top; padding: 10px; border: 1px solid rgba(18,38,48,0.1); height: 86px; background: rgba(255,255,255,0.9); }
-      .cal-date { font-weight: 680; font-size: 0.85rem; margin-bottom: 6px; color: #1f3c4f; }
+      .cal-date { font-weight: 700; font-size: 0.9rem; margin-bottom: 6px; color: #1f3c4f; }
+      .cal-nav {
+        text-align: center;
+        font-family: "Manrope", sans-serif;
+        font-size: 1.02rem;
+        font-weight: 800;
+        color: #114357;
+        padding-top: 6px;
+      }
       .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 0.78rem; }
       .pill-green { background: rgba(28, 170, 108, 0.2); }
       .pill-red { background: rgba(207, 79, 66, 0.2); }
@@ -650,6 +658,25 @@ def build_day_job_details(schedule_df: pd.DataFrame, start_date: date, daily_hou
             day_jobs[working_dates[d]].append(f"{name} ({overlap:.1f}h)")
     return day_jobs
 
+def ordinal_day(n: int) -> str:
+    if 10 <= n % 100 <= 20:
+        suffix = "th"
+    else:
+        suffix = {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
+    return f"{n}{suffix}"
+
+def month_start(d: date) -> date:
+    return date(d.year, d.month, 1)
+
+def add_months(d: date, months: int) -> date:
+    m = d.month - 1 + months
+    y = d.year + m // 12
+    m = m % 12 + 1
+    return date(y, m, 1)
+
+def month_end(d: date) -> date:
+    return add_months(month_start(d), 1) - timedelta(days=1)
+
 def ensure_member_settings(members: list[str]) -> None:
     if "member_settings" not in st.session_state:
         st.session_state["member_settings"] = {}
@@ -737,6 +764,19 @@ def render_kpi(label: str, value: str, note: str) -> None:
         unsafe_allow_html=True,
     )
 
+def _priority_signature(df: pd.DataFrame) -> pd.DataFrame:
+    if df is None or not isinstance(df, pd.DataFrame) or df.empty:
+        return pd.DataFrame(columns=["Assignee", "Job name", "Priority"])
+    out = df.copy()
+    for c in ["Assignee", "Job name", "Priority"]:
+        if c not in out.columns:
+            out[c] = None
+    out = out[["Assignee", "Job name", "Priority"]].copy()
+    out["Assignee"] = out["Assignee"].astype(str)
+    out["Job name"] = out["Job name"].astype(str)
+    out["Priority"] = pd.to_numeric(out["Priority"], errors="coerce").fillna(0).astype(int)
+    return out.reset_index(drop=True)
+
 def render_capacity_calendar(alloc: pd.DataFrame, start: date, end: date, weekdays: set[int], day_jobs: dict[date, list[str]] | None = None):
     free_map = {}
     alloc_map = {}
@@ -773,13 +813,13 @@ def render_capacity_calendar(alloc: pd.DataFrame, start: date, end: date, weekda
                 html += "<td style='background: rgba(49,51,63,0.02);'></td>"
                 continue
             if not is_workday:
-                html += f"<td style='background: rgba(49,51,63,0.03);'><div class='cal-date'>{d}</div><div class='mini'>Non working</div></td>"
+                html += f"<td style='background: rgba(49,51,63,0.03);'><div class='cal-date'>{ordinal_day(d.day)}</div><div class='mini'>Non working</div></td>"
                 continue
 
             free = free_map.get(d, None)
             used = alloc_map.get(d, None)
             if free is None:
-                html += f"<td><div class='cal-date'>{d}</div><span class='pill pill-amber'>No data</span></td>"
+                html += f"<td><div class='cal-date'>{ordinal_day(d.day)}</div><span class='pill pill-amber'>No data</span></td>"
             else:
                 used = 0.0 if used is None else used
                 if used <= 0.001:
@@ -789,7 +829,7 @@ def render_capacity_calendar(alloc: pd.DataFrame, start: date, end: date, weekda
                 else:
                     pill = "pill-amber"
                 html += (
-                    f"<td><div class='cal-date'>{d}</div>"
+                    f"<td><div class='cal-date'>{ordinal_day(d.day)}</div>"
                     f"<span class='pill {pill}'>Free {free:.1f}h</span>"
                 )
                 jobs_today = day_jobs.get(d, [])
@@ -898,7 +938,7 @@ with tabs[0]:
     jobs_clean = clean_jobs_df(jobs_input)
     jobs_norm = normalize_active_priorities(jobs_clean)
     st.session_state["jobs_raw"] = jobs_norm
-    if not jobs_norm[JOB_COLS].reset_index(drop=True).equals(jobs_clean[JOB_COLS].reset_index(drop=True)):
+    if not _priority_signature(jobs_norm).equals(_priority_signature(jobs_clean)):
         st.session_state.pop("jobs_editor", None)
         st.rerun()
     jobs_norm = add_status_columns(jobs_norm)
@@ -1095,7 +1135,7 @@ with tabs[1]:
         edited_norm_cmp = clean_jobs_df(edited_cmp).reset_index(drop=True)
         if len(selected_norm_cmp) == 0 and len(edited_norm_cmp) == 0:
             pass
-        elif not selected_norm_cmp.equals(edited_norm_cmp):
+        elif not _priority_signature(selected_norm_cmp).equals(_priority_signature(edited_norm_cmp)):
             st.session_state.pop(editor_key, None)
             st.rerun()
 
@@ -1139,11 +1179,8 @@ with tabs[2]:
     jobs_norm = normalize_active_priorities(jobs_all)
     jobs_norm = add_status_columns(jobs_norm)
 
-    horizon = st.slider("Workdays to show", min_value=5, max_value=3650, value=20, step=5)
-
     rows = []
-    grids_active = {}
-    grids_all = {}
+    member_context = {}
 
     for member in team_members:
         ms = st.session_state["member_settings"][member]
@@ -1189,13 +1226,14 @@ with tabs[2]:
             work_days_all = build_working_dates(last_finish_all + timedelta(days=1), weekdays, non_working, horizon_days=3650)
             next_free_all = work_days_all[0] if len(work_days_all) else last_finish_all + timedelta(days=1)
 
-        alloc_active = allocate_member_hours(sched_active if isinstance(sched_active, pd.DataFrame) else pd.DataFrame(), sdate, daily_hours, weekdays, non_working, horizon_workdays=horizon)
-        alloc_all = allocate_member_hours(sched_all if isinstance(sched_all, pd.DataFrame) else pd.DataFrame(), sdate, daily_hours, weekdays, non_working, horizon_workdays=horizon)
-        jobs_active = build_day_job_details(sched_active if isinstance(sched_active, pd.DataFrame) else pd.DataFrame(), sdate, daily_hours, weekdays, non_working, horizon_workdays=horizon)
-        jobs_all_days = build_day_job_details(sched_all if isinstance(sched_all, pd.DataFrame) else pd.DataFrame(), sdate, daily_hours, weekdays, non_working, horizon_workdays=horizon)
-
-        grids_active[member] = (alloc_active, sdate, weekdays, non_working, jobs_active)
-        grids_all[member] = (alloc_all, sdate, weekdays, non_working, jobs_all_days)
+        member_context[member] = {
+            "sched_active": sched_active if isinstance(sched_active, pd.DataFrame) else pd.DataFrame(),
+            "sched_all": sched_all if isinstance(sched_all, pd.DataFrame) else pd.DataFrame(),
+            "sdate": sdate,
+            "weekdays": weekdays,
+            "non_working": non_working,
+            "daily_hours": daily_hours,
+        }
 
         rows.append(
             {
@@ -1216,14 +1254,40 @@ with tabs[2]:
     chosen_member = st.selectbox("Member", options=team_members, index=0, key="avail_member")
     mode = st.radio("Mode", options=["Active only", "Active plus on hold backlog"], horizontal=True)
 
-    if mode == "Active only":
-        alloc, sdate, weekdays, non_working, day_jobs = grids_active[chosen_member]
-    else:
-        alloc, sdate, weekdays, non_working, day_jobs = grids_all[chosen_member]
+    ctx = member_context[chosen_member]
+    sdate = ctx["sdate"]
+    weekdays = ctx["weekdays"]
+    non_working = ctx["non_working"]
+    daily_hours = ctx["daily_hours"]
 
-    work_dates = build_working_dates(sdate, weekdays, non_working, horizon_days=3650)
-    work_dates = work_dates[:max(horizon, 1)]
-    if len(work_dates) == 0:
+    month_key = "avail_month_anchor"
+    if month_key not in st.session_state:
+        st.session_state[month_key] = month_start(sdate)
+    st.session_state[month_key] = month_start(st.session_state[month_key])
+
+    nav1, nav2, nav3 = st.columns([1, 5, 1])
+    with nav1:
+        if st.button("◀", key="avail_prev_month", use_container_width=True):
+            st.session_state[month_key] = add_months(st.session_state[month_key], -1)
+            st.rerun()
+    with nav2:
+        st.markdown(f"<div class='cal-nav'>{st.session_state[month_key].strftime('%B %Y')}</div>", unsafe_allow_html=True)
+    with nav3:
+        if st.button("▶", key="avail_next_month", use_container_width=True):
+            st.session_state[month_key] = add_months(st.session_state[month_key], 1)
+            st.rerun()
+
+    view_start = month_start(st.session_state[month_key])
+    view_end = month_end(st.session_state[month_key])
+
+    all_working = build_working_dates(sdate, weekdays, non_working, horizon_days=3650)
+    horizon_workdays = max(1, len([d for d in all_working if d <= view_end]))
+
+    sched_used = ctx["sched_active"] if mode == "Active only" else ctx["sched_all"]
+    alloc = allocate_member_hours(sched_used, sdate, daily_hours, weekdays, non_working, horizon_workdays=horizon_workdays)
+    day_jobs = build_day_job_details(sched_used, sdate, daily_hours, weekdays, non_working, horizon_workdays=horizon_workdays)
+
+    if len(all_working) == 0:
         st.info("No working days available for this member")
     else:
-        render_capacity_calendar(alloc, work_dates[0], work_dates[-1], weekdays, day_jobs=day_jobs)
+        render_capacity_calendar(alloc, view_start, view_end, weekdays, day_jobs=day_jobs)
