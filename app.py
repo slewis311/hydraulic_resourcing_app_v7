@@ -347,7 +347,7 @@ st.markdown(
         display: inline-block;
       }
       .health-healthy .health-dot { background: #2dbb77; }
-      .health-warning .health-dot { background: #f0c92d; }
+      .health-warning .health-dot { background: #f29d2d; }
       .health-critical .health-dot { background: #d9534f; }
       .kpi-health-value {
         display: flex;
@@ -360,7 +360,7 @@ st.markdown(
         line-height: 1.1;
       }
       .dot-healthy { background: #2dbb77; }
-      .dot-warning { background: #f0c92d; }
+      .dot-warning { background: #f29d2d; }
       .dot-critical { background: #d9534f; }
       .table-shell {
         border: 1px solid rgba(31,126,151,0.20);
@@ -1183,21 +1183,17 @@ with tabs[0]:
         health_label = "Healthy"
         health_note = "No overtime currently required"
         dot_class = "dot-healthy"
-    elif overtime_needed_hours < offset_before_first_overtime_hours and overtime_needed_hours < offset_capacity_hours:
-        health_label = "Healthy"
-        health_note = "Available offset capacity covers overtime before and across due dates"
-        dot_class = "dot-healthy"
-    elif overtime_needed_hours > offset_before_first_overtime_hours and overtime_needed_hours < offset_capacity_hours:
-        health_label = "Early warning"
-        health_note = "Short before first due date, but recoverable before all due dates"
-        dot_class = "dot-warning"
     elif overtime_needed_hours > offset_before_first_overtime_hours and overtime_needed_hours > offset_capacity_hours:
         health_label = "Critical"
         health_note = "Offset capacity is below overtime needed"
         dot_class = "dot-critical"
-    else:
+    elif overtime_needed_hours > offset_before_first_overtime_hours:
         health_label = "Early warning"
-        health_note = "Capacity is tightening; monitor and rebalance work"
+        health_note = "Overtime exceeds early offset capacity; rebalance now"
+        dot_class = "dot-warning"
+    else:
+        health_label = "Watch"
+        health_note = "Overtime exists but is still within early offset capacity"
         dot_class = "dot-warning"
 
     cols = st.columns([1,1,1,1,1])
