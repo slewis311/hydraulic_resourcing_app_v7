@@ -52,7 +52,7 @@ from datetime import date, timedelta
 st.markdown(
     '''
     <style>
-      .block-container { padding-top: 1.2rem; padding-bottom: 2rem; }
+      .block-container { padding-top: 3.8rem; padding-bottom: 2rem; }
       .app-title { font-size: 2.0rem; font-weight: 700; margin-bottom: 0.2rem; }
       .app-sub { color: rgba(49, 51, 63, 0.7); margin-top: 0rem; }
       .card { border: 1px solid rgba(49, 51, 63, 0.12); border-radius: 14px; padding: 14px 16px; background: white; }
@@ -67,6 +67,10 @@ st.markdown(
       .pill-red { background: rgba(231, 76, 60, 0.18); }
       .pill-amber { background: rgba(241, 196, 15, 0.18); }
       .mini { color: rgba(49,51,63,0.75); font-size: 0.8rem; margin-top: 4px; }
+      .mini-job { color: rgba(49,51,63,0.82); font-size: 0.78rem; margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      @media (max-width: 900px) {
+        .block-container { padding-top: 4.4rem; }
+      }
     </style>
     ''',
     unsafe_allow_html=True
@@ -364,6 +368,32 @@ def allocate_member_hours(schedule_df: pd.DataFrame, start_date: date, daily_hou
     alloc["Free hours"] = (daily_hours - alloc["Allocated hours"]).clip(lower=0.0)
     return alloc
 
+def build_day_job_details(schedule_df: pd.DataFrame, start_date: date, daily_hours: float, weekdays: set[int], non_working_dates: set[date], horizon_workdays: int = 20) -> dict[date, list[str]]:
+    working_dates = build_working_dates(start_date, weekdays, non_working_dates, horizon_days=3650)
+    working_dates = working_dates[:max(horizon_workdays, 1)]
+    day_jobs = {d: [] for d in working_dates}
+
+    if schedule_df is None or schedule_df.empty:
+        return day_jobs
+
+    for _, row in schedule_df.iterrows():
+        sh = float(row["Start hour index"])
+        fh = float(row["Finish hour index"])
+        start_day = int(sh // daily_hours)
+        end_day = int((fh - 1e-9) // daily_hours)
+        job_name = str(row.get("Job name", "")).strip()
+        for d in range(start_day, end_day + 1):
+            if d >= len(working_dates):
+                break
+            day_start_h = d * daily_hours
+            day_end_h = (d + 1) * daily_hours
+            overlap = max(0.0, min(fh, day_end_h) - max(sh, day_start_h))
+            if overlap <= 0:
+                continue
+            name = job_name if job_name else "Unnamed job"
+            day_jobs[working_dates[d]].append(f"{name} ({overlap:.1f}h)")
+    return day_jobs
+
 def ensure_member_settings(members: list[str]) -> None:
     if "member_settings" not in st.session_state:
         st.session_state["member_settings"] = {}
@@ -439,13 +469,14 @@ def style_schedule(df: pd.DataFrame):
         return styles
     return df.style.apply(apply_styles, axis=None)
 
-def render_capacity_calendar(alloc: pd.DataFrame, start: date, end: date, weekdays: set[int]):
+def render_capacity_calendar(alloc: pd.DataFrame, start: date, end: date, weekdays: set[int], day_jobs: dict[date, list[str]] | None = None):
     free_map = {}
     alloc_map = {}
     for _, r in alloc.iterrows():
         d = r["Date"]
         free_map[d] = float(r.get("Free hours", 0.0))
         alloc_map[d] = float(r.get("Allocated hours", 0.0))
+    day_jobs = day_jobs or {}
 
     first = start
     week_start = first - timedelta(days=first.weekday())
@@ -493,8 +524,12 @@ def render_capacity_calendar(alloc: pd.DataFrame, start: date, end: date, weekda
                     f"<td><div class='cal-date'>{d}</div>"
                     f"<span class='pill {pill}'>Free {free:.1f}h</span>"
                     f"<div class='mini'>Allocated {used:.1f}h</div>"
-                    f"</td>"
                 )
+                jobs_today = day_jobs.get(d, [])
+                if jobs_today:
+                    jobs_html = "".join([f"<div class='mini-job'>{j}</div>" for j in jobs_today])
+                    html += jobs_html
+                html += "</td>"
         html += "</tr>"
     html += "</tbody></table>"
     st.markdown(html, unsafe_allow_html=True)
@@ -572,9 +607,8 @@ with tabs[0]:
     )
 
     jobs_clean = clean_jobs_df(jobs_input)
-    st.session_state["jobs_raw"] = jobs_clean
-
     jobs_norm = normalize_active_priorities(jobs_clean)
+    st.session_state["jobs_raw"] = jobs_norm
     jobs_norm = add_status_columns(jobs_norm)
 
     st.divider()
@@ -741,6 +775,7 @@ with tabs[1]:
 
         jobs_all = jobs_all[jobs_all["Assignee"] != selected_member].copy()
         combined_raw = pd.concat([jobs_all, edited], ignore_index=True)
+        combined_raw = normalize_active_priorities(clean_jobs_df(combined_raw))
         st.session_state["jobs_raw"] = combined_raw
 
         ms = st.session_state["member_settings"][selected_member]
@@ -835,9 +870,11 @@ with tabs[2]:
 
         alloc_active = allocate_member_hours(sched_active if isinstance(sched_active, pd.DataFrame) else pd.DataFrame(), sdate, daily_hours, weekdays, non_working, horizon_workdays=horizon)
         alloc_all = allocate_member_hours(sched_all if isinstance(sched_all, pd.DataFrame) else pd.DataFrame(), sdate, daily_hours, weekdays, non_working, horizon_workdays=horizon)
+        jobs_active = build_day_job_details(sched_active if isinstance(sched_active, pd.DataFrame) else pd.DataFrame(), sdate, daily_hours, weekdays, non_working, horizon_workdays=horizon)
+        jobs_all_days = build_day_job_details(sched_all if isinstance(sched_all, pd.DataFrame) else pd.DataFrame(), sdate, daily_hours, weekdays, non_working, horizon_workdays=horizon)
 
-        grids_active[member] = (alloc_active, sdate, weekdays, non_working)
-        grids_all[member] = (alloc_all, sdate, weekdays, non_working)
+        grids_active[member] = (alloc_active, sdate, weekdays, non_working, jobs_active)
+        grids_all[member] = (alloc_all, sdate, weekdays, non_working, jobs_all_days)
 
         rows.append(
             {
@@ -857,13 +894,13 @@ with tabs[2]:
     mode = st.radio("Mode", options=["Active only", "Active plus on hold backlog"], horizontal=True)
 
     if mode == "Active only":
-        alloc, sdate, weekdays, non_working = grids_active[chosen_member]
+        alloc, sdate, weekdays, non_working, day_jobs = grids_active[chosen_member]
     else:
-        alloc, sdate, weekdays, non_working = grids_all[chosen_member]
+        alloc, sdate, weekdays, non_working, day_jobs = grids_all[chosen_member]
 
     work_dates = build_working_dates(sdate, weekdays, non_working, horizon_days=3650)
     work_dates = work_dates[:max(horizon, 1)]
     if len(work_dates) == 0:
         st.info("No working days available for this member")
     else:
-        render_capacity_calendar(alloc, work_dates[0], work_dates[-1], weekdays)
+        render_capacity_calendar(alloc, work_dates[0], work_dates[-1], weekdays, day_jobs=day_jobs)
