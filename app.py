@@ -244,9 +244,9 @@ st.markdown(
       .kpi-head {
         font-size: 0.8rem;
         font-weight: 700;
-        color: #1c5b72;
-        background: linear-gradient(90deg, rgba(36,167,179,0.18), rgba(239,231,63,0.28));
-        border: 1px solid rgba(31,126,151,0.25);
+        color: var(--brand-dark);
+        background: rgba(255,255,255,0.96);
+        border: 1px solid rgba(31,126,151,0.30);
         border-radius: 999px;
         padding: 4px 10px;
         display: inline-block;
@@ -258,6 +258,22 @@ st.markdown(
         font-weight: 800;
         color: #143746;
         line-height: 1.05;
+      }
+      .table-shell {
+        border: 1px solid rgba(31,126,151,0.20);
+        border-radius: 16px;
+        padding: 8px;
+        background: rgba(255,255,255,0.74);
+        box-shadow: 0 10px 24px rgba(16,35,47,0.08);
+        margin: 4px 0 8px 0;
+      }
+      .table-shell::before {
+        content: "";
+        display: block;
+        height: 3px;
+        border-radius: 999px;
+        background: linear-gradient(90deg, rgba(36,167,179,0.9), rgba(239,231,63,0.65));
+        margin: 0 2px 8px 2px;
       }
       .stDownloadButton button {
         border-radius: 12px;
@@ -760,6 +776,7 @@ def render_capacity_calendar(alloc: pd.DataFrame, start: date, end: date, weekda
 with st.sidebar:
     st.subheader("Team")
 
+    st.markdown('<div class="table-shell">', unsafe_allow_html=True)
     team_df = st.data_editor(
         st.session_state["team"],
         num_rows="dynamic",
@@ -771,6 +788,7 @@ with st.sidebar:
         },
         key="team_editor",
     )
+    st.markdown('</div>', unsafe_allow_html=True)
     team_df = team_df.dropna(subset=["Member", "Daily hours"], how="any")
     team_df = team_df[team_df["Member"].astype(str).str.len() > 0].reset_index(drop=True)
     st.session_state["team"] = team_df
@@ -813,6 +831,7 @@ with tabs[0]:
     st.subheader("All jobs input")
     st.caption("Priority 1 or higher means active, Priority 0 means on hold")
 
+    st.markdown('<div class="table-shell">', unsafe_allow_html=True)
     jobs_input = st.data_editor(
         st.session_state["jobs_raw"],
         num_rows="dynamic",
@@ -828,6 +847,7 @@ with tabs[0]:
         },
         key="jobs_editor",
     )
+    st.markdown('</div>', unsafe_allow_html=True)
 
     jobs_clean = clean_jobs_df(jobs_input)
     jobs_norm = normalize_active_priorities(jobs_clean)
@@ -912,7 +932,9 @@ with tabs[0]:
     with cols[3]:
         render_kpi("Active members", f"{active_members}", "Members with active work")
 
+    st.markdown('<div class="table-shell">', unsafe_allow_html=True)
     st.dataframe(style_schedule(show), use_container_width=True)
+    st.markdown('</div>', unsafe_allow_html=True)
 
     st.divider()
     st.subheader("Export")
@@ -952,6 +974,7 @@ with tabs[1]:
                 st.session_state[leave_key] = pd.DataFrame({"Date": pd.to_datetime(existing)})
 
         st.caption("Leave dates and shutdown dates")
+        st.markdown('<div class="table-shell">', unsafe_allow_html=True)
         leave_df = st.data_editor(
             st.session_state[leave_key],
             num_rows="dynamic",
@@ -960,6 +983,7 @@ with tabs[1]:
             column_config={"Date": st.column_config.DateColumn(required=False)},
             key=f"leave_editor_{selected_member}",
         )
+        st.markdown('</div>', unsafe_allow_html=True)
         if "Date" in leave_df.columns:
             leave_df["Date"] = pd.to_datetime(leave_df["Date"], errors="coerce").dt.date
         st.session_state[leave_key] = leave_df
@@ -979,6 +1003,7 @@ with tabs[1]:
             member_jobs = pd.DataFrame(columns=JOB_COLS)
 
         editor_key = f"member_jobs_editor_{selected_member}"
+        st.markdown('<div class="table-shell">', unsafe_allow_html=True)
         edited = st.data_editor(
             member_jobs,
             num_rows="dynamic",
@@ -994,6 +1019,7 @@ with tabs[1]:
             },
             key=editor_key,
         )
+        st.markdown('</div>', unsafe_allow_html=True)
 
         edited = clean_jobs_df(edited)
         if not edited.empty:
@@ -1037,7 +1063,9 @@ with tabs[1]:
             view = pd.concat(frames, ignore_index=True)
             view = view[["Job name","Priority","Status","Required hours","Start date","Finish date","Due date","Notes"]].copy()
             view = view.sort_values(["Status","Priority","Job name"], ascending=[True, True, True]).reset_index(drop=True)
+            st.markdown('<div class="table-shell">', unsafe_allow_html=True)
             st.dataframe(style_schedule(view), use_container_width=True)
+            st.markdown('</div>', unsafe_allow_html=True)
 
         st.markdown('</div>', unsafe_allow_html=True)
 
@@ -1116,7 +1144,9 @@ with tabs[2]:
         )
 
     summary = pd.DataFrame(rows).sort_values(["Member"]).reset_index(drop=True)
+    st.markdown('<div class="table-shell">', unsafe_allow_html=True)
     st.dataframe(summary, use_container_width=True, hide_index=True)
+    st.markdown('</div>', unsafe_allow_html=True)
 
     st.divider()
     st.subheader("Capacity calendar")
