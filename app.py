@@ -54,11 +54,11 @@ st.markdown(
     <style>
       @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600&display=swap');
       :root {
-        --bg-a: #d4d4d4;
-        --bg-b: #d0d0d0;
-        --ink-1: #122630;
-        --ink-2: #4f636e;
-        --line: rgba(18, 38, 48, 0.14);
+        --bg-a: #f6fbfd;
+        --bg-b: #edf7fa;
+        --ink-1: #10242f;
+        --ink-2: #4a6270;
+        --line: rgba(16, 36, 47, 0.10);
         --brand: #24a7b3;
         --brand-dark: #1f7e97;
         --accent: #efe73f;
@@ -66,18 +66,36 @@ st.markdown(
       }
       .stApp {
         background:
-          radial-gradient(1200px 500px at 82% -12%, rgba(36,167,179,0.25), transparent 62%),
+          linear-gradient(120deg, rgba(36,167,179,0.08), transparent 35%),
+          radial-gradient(900px 360px at 88% -8%, rgba(36,167,179,0.22), transparent 60%),
+          radial-gradient(700px 280px at 8% 2%, rgba(239,231,63,0.14), transparent 58%),
           linear-gradient(180deg, var(--bg-a), var(--bg-b));
       }
       .block-container { padding-top: 3.8rem; padding-bottom: 2rem; max-width: 1320px; }
       html, body, [class*="css"] { font-family: "Plus Jakarta Sans", sans-serif; color: var(--ink-1); }
+      .main .block-container {
+        position: relative;
+      }
+      .main .block-container::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background-image:
+          linear-gradient(rgba(31,126,151,0.04) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(31,126,151,0.04) 1px, transparent 1px);
+        background-size: 28px 28px;
+        pointer-events: none;
+        mask-image: linear-gradient(180deg, rgba(0,0,0,0.45), rgba(0,0,0,0.08) 28%, transparent 55%);
+      }
       .app-hero {
-        background: linear-gradient(135deg, #197992, #24a7b3);
-        border: 1px solid rgba(255,255,255,0.22);
+        background: linear-gradient(135deg, #167f99, #24a7b3 55%, #59c0c9);
+        border: 1px solid rgba(255,255,255,0.35);
         border-radius: 18px;
         padding: 22px 24px 20px 24px;
         margin-bottom: 0.75rem;
-        box-shadow: 0 16px 34px rgba(20, 62, 75, 0.25);
+        box-shadow:
+          0 18px 40px rgba(22, 92, 113, 0.28),
+          0 0 0 1px rgba(255,255,255,0.26) inset;
         position: relative;
         overflow: hidden;
       }
@@ -88,7 +106,7 @@ st.markdown(
         right: 0;
         bottom: 0;
         height: 5px;
-        background: linear-gradient(90deg, var(--accent), rgba(239, 231, 63, 0.15));
+        background: linear-gradient(90deg, var(--accent), rgba(239, 231, 63, 0.2));
         border-radius: 0 0 18px 18px;
       }
       .app-hero::before {
@@ -99,7 +117,7 @@ st.markdown(
         right: -80px;
         top: -120px;
         border-radius: 50%;
-        background: radial-gradient(circle, rgba(255,255,255,0.32), rgba(255,255,255,0.02));
+        background: radial-gradient(circle, rgba(255,255,255,0.36), rgba(255,255,255,0.03));
       }
       .hero-chip {
         display: inline-block;
@@ -120,9 +138,11 @@ st.markdown(
         border: 1px solid var(--line);
         border-radius: 16px;
         padding: 14px 16px;
-        background: rgba(255,255,255,0.84);
-        backdrop-filter: blur(4px);
-        box-shadow: 0 10px 24px rgba(16, 35, 47, 0.08);
+        background: rgba(255,255,255,0.86);
+        backdrop-filter: blur(6px);
+        box-shadow:
+          0 10px 28px rgba(16, 35, 47, 0.08),
+          0 0 0 1px rgba(255,255,255,0.75) inset;
       }
       .metric-note { font-size: 0.84rem; color: var(--ink-2); margin-top: 0.15rem; }
       .section-title {
@@ -135,7 +155,7 @@ st.markdown(
       }
       .calendar-table { border-collapse: collapse; width: 100%; table-layout: fixed; }
       .calendar-table th { text-align: left; font-size: 0.82rem; padding: 8px; color: var(--ink-2); border-bottom: 1px solid var(--line); }
-      .calendar-table td { vertical-align: top; padding: 10px; border: 1px solid rgba(18,38,48,0.1); height: 86px; background: rgba(255,255,255,0.82); }
+      .calendar-table td { vertical-align: top; padding: 10px; border: 1px solid rgba(18,38,48,0.1); height: 86px; background: rgba(255,255,255,0.9); }
       .cal-date { font-weight: 680; font-size: 0.85rem; margin-bottom: 6px; color: #1f3c4f; }
       .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 0.78rem; }
       .pill-green { background: rgba(28, 170, 108, 0.2); }
@@ -144,32 +164,36 @@ st.markdown(
       .mini { color: var(--ink-2); font-size: 0.8rem; margin-top: 4px; }
       .mini-job { color: #27485c; font-size: 0.78rem; margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
       [data-testid="stSidebar"] {
-        background: linear-gradient(180deg, #d8d8d8, #d1d1d1);
-        border-right: 1px solid rgba(18,38,48,0.16);
+        background:
+          linear-gradient(180deg, #f0f9fc, #e6f3f7);
+        border-right: 1px solid rgba(31,126,151,0.20);
       }
       [data-testid="stSidebar"] h3 { color: #1d3b4f; font-family: "Manrope", sans-serif; }
       [data-testid="stSidebar"] .stButton > button {
         border-radius: 12px;
-        border: 1px solid rgba(31,126,151,0.35);
-        background: rgba(255,255,255,0.72);
+        border: 1px solid rgba(31,126,151,0.30);
+        background: linear-gradient(135deg, rgba(255,255,255,0.95), rgba(232,246,250,0.9));
         transition: all 140ms ease;
       }
       [data-testid="stSidebar"] .stButton > button:hover {
         border-color: var(--brand);
         color: var(--brand-dark);
-        background: linear-gradient(135deg, rgba(239,231,63,0.24), rgba(255,255,255,0.85));
+        background: linear-gradient(135deg, rgba(239,231,63,0.28), rgba(255,255,255,0.92));
         transform: translateY(-1px);
+        box-shadow: 0 6px 14px rgba(31,126,151,0.14);
       }
       .stTabs [role="tablist"] { gap: 8px; border-bottom: none; }
       .stTabs [role="tab"] {
-        background: rgba(255,255,255,0.58);
+        background: rgba(255,255,255,0.7);
         border: 1px solid rgba(18,38,48,0.08);
         border-radius: 999px;
         padding: 8px 14px;
       }
       .stTabs [aria-selected="true"] {
         border-color: rgba(31,126,151,0.35);
-        box-shadow: 0 0 0 2px rgba(239,231,63,0.45) inset;
+        box-shadow:
+          0 0 0 2px rgba(239,231,63,0.45) inset,
+          0 8px 20px rgba(31,126,151,0.15);
         color: var(--brand-dark);
         font-weight: 700;
         background: rgba(255,255,255,0.95);
@@ -183,7 +207,14 @@ st.markdown(
       .stDownloadButton button {
         border-radius: 12px;
         border: 1px solid rgba(31,126,151,0.36);
-        background: linear-gradient(135deg, rgba(36,167,179,0.14), rgba(255,255,255,0.95));
+        background: linear-gradient(135deg, rgba(36,167,179,0.16), rgba(255,255,255,0.96));
+        box-shadow: 0 8px 18px rgba(31,126,151,0.12);
+      }
+      .stButton > button {
+        border-radius: 12px;
+      }
+      .stButton > button:hover {
+        box-shadow: 0 6px 16px rgba(31,126,151,0.16);
       }
       @media (max-width: 900px) {
         .block-container { padding-top: 4.4rem; }
@@ -198,7 +229,6 @@ st.markdown(
 st.markdown(
     '''
     <div class="app-hero">
-      <div class="hero-chip">Resourcing Control</div>
       <div class="app-title">Hydraulic Resourcing App</div>
       <div class="app-sub">Team scheduling, priority queues, and completion forecasting</div>
     </div>
