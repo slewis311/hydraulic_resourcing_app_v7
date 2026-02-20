@@ -959,6 +959,7 @@ with tabs[0]:
     scheduled_all = []
     hold_rows = []
     member_working_cfg = {}
+    member_active_sched = {}
 
     for member in team_members:
         member_jobs = jobs_norm[jobs_norm["Assignee"] == member].copy()
@@ -986,6 +987,7 @@ with tabs[0]:
         sched = schedule_member_jobs(active, sdate, daily_hours, weekdays, non_working)
         sched["Assignee"] = member
         scheduled_all.append(sched)
+        member_active_sched[member] = sched.copy()
 
     show_frames = []
     if len(scheduled_all) > 0:
@@ -1014,6 +1016,8 @@ with tabs[0]:
     total_hours_active = float(active_only["Required hours"].sum()) if not active_only.empty else 0.0
     total_hours_backlog = float(hold_only["Required hours"].sum()) if not hold_only.empty else 0.0
     overtime_needed_hours = 0.0
+    overtime_members = set()
+    overtime_due_dates = []
     if len(scheduled_all) > 0:
         for _, row in pd.concat(scheduled_all, ignore_index=True).iterrows():
             due = row.get("Due date")
@@ -1027,7 +1031,44 @@ with tabs[0]:
                 continue
             cutoff = due_cutoff_hours(due, working_dates, daily_hours)
             finish_h = float(row.get("Finish hour index", 0.0))
-            overtime_needed_hours += max(0.0, finish_h - cutoff)
+            over = max(0.0, finish_h - cutoff)
+            overtime_needed_hours += over
+            if over > 0.0:
+                overtime_members.add(member)
+                overtime_due_dates.append(due)
+
+    offset_capacity_hours = 0.0
+    if overtime_needed_hours > 0 and len(overtime_due_dates) > 0:
+        cutoff_date = max(overtime_due_dates)
+        active_members_with_jobs = set(active_only["Assignee"].astype(str).unique().tolist()) if not active_only.empty else set()
+        helper_members = [m for m in active_members_with_jobs if m not in overtime_members]
+        for member in helper_members:
+            cfg = member_working_cfg.get(member, {})
+            weekdays = cfg.get("weekdays")
+            if weekdays is None:
+                # weekdays are captured indirectly in member settings
+                weekdays = st.session_state["member_settings"][member]["weekdays"]
+            non_working = set(st.session_state["member_settings"][member]["leave_dates"])
+            sdate = st.session_state["member_settings"][member].get("start_date", date.today())
+            daily_hours = float(cfg.get("daily_hours", member_hours.get(member, 8.0)))
+            sched_member = member_active_sched.get(member, pd.DataFrame())
+
+            working_dates = build_working_dates(sdate, weekdays, non_working, horizon_days=3650)
+            horizon_workdays = len([d for d in working_dates if d <= cutoff_date])
+            if horizon_workdays <= 0:
+                continue
+
+            alloc = allocate_member_hours(
+                sched_member,
+                sdate,
+                daily_hours,
+                weekdays,
+                non_working,
+                horizon_workdays=horizon_workdays,
+            )
+            alloc = alloc[(alloc["Date"] >= date.today()) & (alloc["Date"] <= cutoff_date)].copy()
+            if not alloc.empty:
+                offset_capacity_hours += float(alloc["Free hours"].sum())
 
     due_tracked = active_only.dropna(subset=["Due date", "Finish date"]).copy() if not active_only.empty else pd.DataFrame()
     if due_tracked.empty:
@@ -1047,11 +1088,14 @@ with tabs[0]:
             "Sum of active job durations",
         )
     with cols[1]:
-        render_kpi(
-            "Backlog hours",
-            f"{total_hours_backlog:.1f}",
-            "Sum of on hold job durations",
-        )
+        if overtime_needed_hours <= 0:
+            render_kpi("Offset capacity (hrs)", "-", "No overtime currently required")
+        else:
+            render_kpi(
+                "Offset capacity (hrs)",
+                f"{offset_capacity_hours:.1f}",
+                "Free hours from other active members before overtime due dates",
+            )
     with cols[2]:
         render_kpi(
             "Overtime needed (hrs)",
