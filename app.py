@@ -1,5 +1,5 @@
 import streamlit as st
-import os
+
 
 def get_secret(name: str) -> str:
     try:
@@ -71,6 +71,37 @@ def db_init_tables(supabase):
     # No direct schema creation here, run the provided SQL in Supabase first
     return
 
+
+def _json_safe(v):
+    # Convert pandas, numpy, and datetime types to JSON safe primitives
+    try:
+        if v is None:
+            return None
+        # pandas and numpy missing values
+        if isinstance(v, float) and (math.isnan(v) or math.isinf(v)):
+            return None
+        if pd.isna(v):
+            return None
+        # datetime like
+        if isinstance(v, (datetime.date, datetime.datetime)):
+            return v.isoformat()
+        # pandas timestamp
+        if isinstance(v, pd.Timestamp):
+            if pd.isna(v):
+                return None
+            return v.to_pydatetime().isoformat()
+        # numpy scalars
+        if isinstance(v, (np.integer,)):
+            return int(v)
+        if isinstance(v, (np.floating,)):
+            return float(v)
+        if isinstance(v, (np.bool_,)):
+            return bool(v)
+        return v
+    except Exception:
+        # last resort
+        return str(v)
+
 def db_fetch_table(supabase, table_name):
     try:
         res = supabase.table(table_name).select("*").execute()
@@ -81,7 +112,7 @@ def db_fetch_table(supabase, table_name):
     except Exception as e:
         st.error(f"Database read error for {table_name}")
         st.write(str(e))
-        st.stop()
+        return []
 
 def db_upsert_rows(supabase, table_name, rows, pk):
     if rows is None:
@@ -162,6 +193,9 @@ def seed_if_empty(supabase):
 
 def sync_session_from_db(team_rows, jobs_rows, settings_rows, leave_rows):
     import pandas as pd
+import numpy as np
+import math
+import datetime
     from datetime import date
 
     team_df = pd.DataFrame(team_rows) if len(team_rows) > 0 else pd.DataFrame(columns=["member","daily_hours"])
@@ -648,7 +682,7 @@ with tabs[0]:
 
     if len(show_frames) == 0:
         st.info("No jobs to schedule yet")
-        st.stop()
+        show_frames = [pd.DataFrame(columns=["Assignee","Job name","Priority","Status","Required hours","Start date","Finish date","Due date","Notes"])]
 
     show = pd.concat(show_frames, ignore_index=True)
     show = show.sort_values(["Assignee","Status","Priority","Job name"], ascending=[True, True, True, True]).reset_index(drop=True)
