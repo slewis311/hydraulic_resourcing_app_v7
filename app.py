@@ -190,10 +190,8 @@ def sync_session_from_db(team_rows, jobs_rows, settings_rows, leave_rows):
         jobs_df = pd.DataFrame(columns=["Job name","Required hours","Priority","Assignee","Due date","Notes"])
 
     st.session_state["team"] = team_df
-persist_team_and_jobs(supabase)
-persist_team_and_jobs(supabase)
     st.session_state["jobs_raw"] = jobs_df
-persist_team_and_jobs(supabase)
+    persist_team_and_jobs(supabase)
 
     # Settings and leave
     if "member_settings" not in st.session_state:
@@ -516,21 +514,25 @@ def render_capacity_calendar(alloc: pd.DataFrame, start: date, end: date, weekda
     html += "</tbody></table>"
     st.markdown(html, unsafe_allow_html=True)
 
+# Database bootstrap
+supabase, team_rows, jobs_rows, settings_rows, leave_rows = load_from_db()
+seed_if_empty(supabase)
+supabase, team_rows, jobs_rows, settings_rows, leave_rows = load_from_db()
+sync_session_from_db(team_rows, jobs_rows, settings_rows, leave_rows)
+
+# Sidebar
 with st.sidebar:
+    st.subheader("App")
+    st.session_state["auto_refresh_on"] = st.toggle("Auto refresh", value=False)
+    st.session_state["auto_refresh_seconds"] = st.number_input("Auto refresh seconds", min_value=10, max_value=600, value=30, step=10)
 
-st.subheader("App")
-st.session_state["auto_refresh_on"] = st.toggle("Auto refresh", value=False)
-st.session_state["auto_refresh_seconds"] = st.number_input("Auto refresh seconds", min_value=10, max_value=600, value=30, step=10)
     st.subheader("Team")
-
     if "team" not in st.session_state:
-        st.session_state["team"] = pd.DataFrame(
-            [
-                {"Member": "SL", "Daily hours": 8.0},
-                {"Member": "LS", "Daily hours": 8.0},
-                {"Member": "LB", "Daily hours": 8.0},
-            ]
-        )
+        st.session_state["team"] = pd.DataFrame([
+            {"Member": "SL", "Daily hours": 8.0},
+            {"Member": "LS", "Daily hours": 8.0},
+            {"Member": "LB", "Daily hours": 8.0},
+        ])
 
     team_df = st.data_editor(
         st.session_state["team"],
@@ -546,7 +548,7 @@ st.session_state["auto_refresh_seconds"] = st.number_input("Auto refresh seconds
     team_df = team_df.dropna(subset=["Member", "Daily hours"], how="any")
     team_df = team_df[team_df["Member"].astype(str).str.len() > 0].reset_index(drop=True)
     st.session_state["team"] = team_df
-persist_team_and_jobs(supabase)
+    persist_team_and_jobs(supabase)
 
 team_members = team_df["Member"].astype(str).tolist() if not team_df.empty else []
 member_hours = {row["Member"]: float(row["Daily hours"]) for _, row in team_df.iterrows()} if not team_df.empty else {}
@@ -558,26 +560,17 @@ if len(team_members) == 0:
 ensure_member_settings(team_members)
 
 if "jobs_raw" not in st.session_state:
-    st.session_state["jobs_raw"] = pd.DataFrame(
-        [
-            {"Job name": "Job B", "Required hours": 8.0, "Priority": 1, "Assignee": "SL", "Due date": None, "Notes": ""},
-            {"Job name": "Job A", "Required hours": 16.0, "Priority": 2, "Assignee": "SL", "Due date": None, "Notes": ""},
-            {"Job name": "Backlog item", "Required hours": 6.0, "Priority": 0, "Assignee": "SL", "Due date": None
-# Database bootstrap
-supabase, team_rows, jobs_rows, settings_rows, leave_rows = load_from_db()
-seed_if_empty(supabase)
-supabase, team_rows, jobs_rows, settings_rows, leave_rows = load_from_db()
-sync_session_from_db(team_rows, jobs_rows, settings_rows, leave_rows)
+    st.session_state["jobs_raw"] = pd.DataFrame([
+        {"Job name": "Job B", "Required hours": 8.0, "Priority": 1, "Assignee": "SL", "Due date": None, "Notes": ""},
+        {"Job name": "Job A", "Required hours": 16.0, "Priority": 2, "Assignee": "SL", "Due date": None, "Notes": ""},
+        {"Job name": "Backlog item", "Required hours": 6.0, "Priority": 0, "Assignee": "SL", "Due date": None, "Notes": "On hold"},
+    ])
 
 # Optional auto refresh
 if st.session_state.get("auto_refresh_on", False):
     import time
     time.sleep(int(st.session_state.get("auto_refresh_seconds", 30)))
     st.rerun()
-
-, "Notes": "On hold"},
-        ]
-    )
 
 tabs = st.tabs(["Team dashboard", "Staff pages", "Availability"])
 
@@ -604,7 +597,7 @@ with tabs[0]:
 
     jobs_clean = clean_jobs_df(jobs_input)
     st.session_state["jobs_raw"] = jobs_clean
-persist_team_and_jobs(supabase)
+    persist_team_and_jobs(supabase)
 
     jobs_norm = normalize_active_priorities(jobs_clean)
     jobs_norm = add_status_columns(jobs_norm)
@@ -784,7 +777,7 @@ with tabs[1]:
         jobs_all = jobs_all[jobs_all["Assignee"] != selected_member].copy()
         combined_raw = pd.concat([jobs_all, edited], ignore_index=True)
         st.session_state["jobs_raw"] = combined_raw
-persist_team_and_jobs(supabase)
+        persist_team_and_jobs(supabase)
 
         ms = st.session_state["member_settings"][selected_member]
         weekdays = ms["weekdays"]
