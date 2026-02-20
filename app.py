@@ -523,7 +523,6 @@ def render_capacity_calendar(alloc: pd.DataFrame, start: date, end: date, weekda
                 html += (
                     f"<td><div class='cal-date'>{d}</div>"
                     f"<span class='pill {pill}'>Free {free:.1f}h</span>"
-                    f"<div class='mini'>Allocated {used:.1f}h</div>"
                 )
                 jobs_today = day_jobs.get(d, [])
                 if jobs_today:
@@ -609,6 +608,9 @@ with tabs[0]:
     jobs_clean = clean_jobs_df(jobs_input)
     jobs_norm = normalize_active_priorities(jobs_clean)
     st.session_state["jobs_raw"] = jobs_norm
+    if not jobs_norm[JOB_COLS].reset_index(drop=True).equals(jobs_clean[JOB_COLS].reset_index(drop=True)):
+        st.session_state.pop("jobs_editor", None)
+        st.rerun()
     jobs_norm = add_status_columns(jobs_norm)
 
     st.divider()
@@ -774,16 +776,21 @@ with tabs[1]:
             edited["Assignee"] = selected_member
 
         jobs_all = jobs_all[jobs_all["Assignee"] != selected_member].copy()
-        combined_raw = pd.concat([jobs_all, edited], ignore_index=True)
-        combined_raw = normalize_active_priorities(clean_jobs_df(combined_raw))
-        st.session_state["jobs_raw"] = combined_raw
+        combined_clean = clean_jobs_df(pd.concat([jobs_all, edited], ignore_index=True))
+        combined_norm = normalize_active_priorities(combined_clean)
+        st.session_state["jobs_raw"] = combined_norm
+        selected_norm = combined_norm[combined_norm["Assignee"] == selected_member][JOB_COLS].reset_index(drop=True)
+        edited_cmp = edited[JOB_COLS].reset_index(drop=True)
+        if not selected_norm.equals(edited_cmp):
+            st.session_state.pop(editor_key, None)
+            st.rerun()
 
         ms = st.session_state["member_settings"][selected_member]
         weekdays = ms["weekdays"]
         non_working = set(ms["leave_dates"])
         daily_hours = float(member_hours.get(selected_member, 8.0))
 
-        jobs_norm = normalize_active_priorities(clean_jobs_df(combined_raw))
+        jobs_norm = normalize_active_priorities(clean_jobs_df(combined_norm))
         jobs_norm = add_status_columns(jobs_norm)
         member_norm = jobs_norm[jobs_norm["Assignee"] == selected_member].copy()
 
