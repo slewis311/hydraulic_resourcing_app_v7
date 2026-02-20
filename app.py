@@ -196,7 +196,7 @@ def sync_session_from_db(team_rows, jobs_rows, settings_rows, leave_rows):
 import numpy as np
 import math
 import datetime
-    from datetime import date
+from datetime import date
 
     team_df = pd.DataFrame(team_rows) if len(team_rows) > 0 else pd.DataFrame(columns=["member","daily_hours"])
     if "Member" not in team_df.columns:
