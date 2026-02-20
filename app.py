@@ -267,13 +267,41 @@ st.markdown(
         box-shadow: 0 10px 24px rgba(16,35,47,0.08);
         margin: 4px 0 8px 0;
       }
-      .table-shell::before {
-        content: "";
-        display: block;
-        height: 3px;
+      .table-toolbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        padding: 6px 8px 10px 8px;
+      }
+      .table-title {
+        font-family: "Manrope", sans-serif;
+        font-weight: 800;
+        color: #134457;
+        letter-spacing: -0.01em;
+      }
+      .table-meta {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      .table-chip {
+        font-size: 0.72rem;
+        font-weight: 700;
         border-radius: 999px;
-        background: linear-gradient(90deg, rgba(36,167,179,0.9), rgba(239,231,63,0.65));
-        margin: 0 2px 8px 2px;
+        padding: 3px 9px;
+        border: 1px solid rgba(31,126,151,0.24);
+        background: rgba(255,255,255,0.92);
+        color: #1d5d74;
+      }
+      .table-chip-hold {
+        border-color: rgba(239,231,63,0.55);
+        background: rgba(239,231,63,0.18);
+        color: #605a19;
+      }
+      .table-chip-active {
+        border-color: rgba(31,126,151,0.35);
+        background: rgba(36,167,179,0.12);
       }
       .stDownloadButton button {
         border-radius: 12px;
@@ -831,7 +859,25 @@ with tabs[0]:
     st.subheader("All jobs input")
     st.caption("Priority 1 or higher means active, Priority 0 means on hold")
 
+    preview_jobs = clean_jobs_df(st.session_state.get("jobs_raw", pd.DataFrame(columns=JOB_COLS)))
+    active_count = int((preview_jobs["Priority"] >= 1).sum()) if not preview_jobs.empty else 0
+    hold_count = int((preview_jobs["Priority"] == 0).sum()) if not preview_jobs.empty else 0
+    total_count = int(len(preview_jobs))
+
     st.markdown('<div class="table-shell">', unsafe_allow_html=True)
+    st.markdown(
+        (
+            "<div class='table-toolbar'>"
+            "<div class='table-title'>Work Queue</div>"
+            "<div class='table-meta'>"
+            f"<span class='table-chip'>Total {total_count}</span>"
+            f"<span class='table-chip table-chip-active'>Active {active_count}</span>"
+            f"<span class='table-chip table-chip-hold'>On hold {hold_count}</span>"
+            "</div>"
+            "</div>"
+        ),
+        unsafe_allow_html=True,
+    )
     jobs_input = st.data_editor(
         st.session_state["jobs_raw"],
         num_rows="dynamic",
@@ -909,23 +955,24 @@ with tabs[0]:
     show = show.sort_values(["Assignee","Status","Priority","Job name"], ascending=[True, True, True, True]).reset_index(drop=True)
 
     active_only = show[show["Status"] == "Active"].copy()
-    forecast_finish = max(active_only["Finish date"].dropna().tolist()) if not active_only.empty else None
+    hold_only = show[show["Status"] == "On hold"].copy()
     total_hours_active = float(active_only["Required hours"].sum()) if not active_only.empty else 0.0
+    total_hours_backlog = float(hold_only["Required hours"].sum()) if not hold_only.empty else 0.0
     total_jobs = int(len(show))
     active_members = int(active_only["Assignee"].nunique()) if not active_only.empty else 0
 
     cols = st.columns([1.2,1.2,1.2,1.2])
     with cols[0]:
         render_kpi(
-            "Forecast finish date",
-            "" if forecast_finish is None else str(forecast_finish),
-            "Latest finish across active work",
-        )
-    with cols[1]:
-        render_kpi(
             "Active scheduled hours",
             f"{total_hours_active:.1f}",
             "Sum of active job durations",
+        )
+    with cols[1]:
+        render_kpi(
+            "Backlog hours",
+            f"{total_hours_backlog:.1f}",
+            "Sum of on hold job durations",
         )
     with cols[2]:
         render_kpi("Jobs", f"{total_jobs}", "Active and on hold")
@@ -948,7 +995,6 @@ with tabs[1]:
     left, right = st.columns([1, 2])
 
     with left:
-        st.markdown('<div class="card">', unsafe_allow_html=True)
         st.write("Calendar")
 
         s_key = f"start_{selected_member}"
@@ -991,19 +1037,33 @@ with tabs[1]:
 
         st.write("Daily hours")
         st.write(f"{member_hours.get(selected_member, 8.0):.1f}")
-        st.markdown('</div>', unsafe_allow_html=True)
 
     with right:
-        st.markdown('<div class="card">', unsafe_allow_html=True)
         st.write("Jobs for selected staff member")
 
         jobs_all = clean_jobs_df(st.session_state.get("jobs_raw", pd.DataFrame(columns=JOB_COLS)))
         member_jobs = jobs_all[jobs_all["Assignee"] == selected_member].copy()
         if member_jobs.empty:
             member_jobs = pd.DataFrame(columns=JOB_COLS)
+        active_count_staff = int((member_jobs["Priority"] >= 1).sum()) if not member_jobs.empty else 0
+        hold_count_staff = int((member_jobs["Priority"] == 0).sum()) if not member_jobs.empty else 0
+        total_count_staff = int(len(member_jobs))
 
         editor_key = f"member_jobs_editor_{selected_member}"
         st.markdown('<div class="table-shell">', unsafe_allow_html=True)
+        st.markdown(
+            (
+                "<div class='table-toolbar'>"
+                f"<div class='table-title'>{selected_member} queue</div>"
+                "<div class='table-meta'>"
+                f"<span class='table-chip'>Total {total_count_staff}</span>"
+                f"<span class='table-chip table-chip-active'>Active {active_count_staff}</span>"
+                f"<span class='table-chip table-chip-hold'>On hold {hold_count_staff}</span>"
+                "</div>"
+                "</div>"
+            ),
+            unsafe_allow_html=True,
+        )
         edited = st.data_editor(
             member_jobs,
             num_rows="dynamic",
@@ -1066,8 +1126,6 @@ with tabs[1]:
             st.markdown('<div class="table-shell">', unsafe_allow_html=True)
             st.dataframe(style_schedule(view), use_container_width=True)
             st.markdown('</div>', unsafe_allow_html=True)
-
-        st.markdown('</div>', unsafe_allow_html=True)
 
 with tabs[2]:
     st.markdown('<div class="section-title">Availability</div>', unsafe_allow_html=True)
