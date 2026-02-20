@@ -14,10 +14,40 @@ def require_login():
     st.markdown(
         '''
         <style>
-          .login-wrap { max-width: 520px; margin: 5vh auto 0 auto; }
-          .login-card { border: 1px solid rgba(49, 51, 63, 0.12); border-radius: 16px; padding: 18px 18px; background: white; }
-          .login-title { font-size: 1.6rem; font-weight: 750; margin-bottom: 0.2rem; }
-          .login-sub { color: rgba(49, 51, 63, 0.70); margin-bottom: 1rem; }
+          @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600&display=swap');
+          .stApp {
+            background:
+              linear-gradient(120deg, rgba(36,167,179,0.08), transparent 35%),
+              radial-gradient(900px 360px at 88% -8%, rgba(36,167,179,0.22), transparent 60%),
+              radial-gradient(700px 280px at 8% 2%, rgba(239,231,63,0.14), transparent 58%),
+              linear-gradient(180deg, #f6fbfd, #edf7fa);
+          }
+          html, body, [class*="css"] { font-family: "Plus Jakarta Sans", sans-serif; color: #10242f; }
+          .login-wrap { max-width: 560px; margin: 9vh auto 0 auto; }
+          .login-card {
+            border: 1px solid rgba(16, 36, 47, 0.12);
+            border-radius: 18px;
+            padding: 20px 20px;
+            background: rgba(255,255,255,0.88);
+            backdrop-filter: blur(6px);
+            box-shadow: 0 14px 30px rgba(16, 35, 47, 0.10);
+          }
+          .login-title { font-family: "Manrope", sans-serif; font-size: 2rem; font-weight: 800; margin-bottom: 0.25rem; color: #123645; }
+          .login-sub { color: #4a6270; margin-bottom: 1rem; }
+          .login-card [data-testid="stTextInput"] input {
+            border-radius: 12px;
+            border: 1px solid rgba(31,126,151,0.26);
+            background: rgba(255,255,255,0.9);
+          }
+          .login-card .stButton > button {
+            border-radius: 12px;
+            border: 1px solid rgba(31,126,151,0.34);
+            background: linear-gradient(135deg, rgba(36,167,179,0.14), rgba(255,255,255,0.96));
+          }
+          .login-card .stButton > button:hover {
+            border-color: #24a7b3;
+            box-shadow: 0 6px 16px rgba(31,126,151,0.16);
+          }
         </style>
         ''',
         unsafe_allow_html=True
