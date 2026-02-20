@@ -1072,9 +1072,6 @@ with tabs[0]:
     show = show.sort_values(["Assignee","Status","Priority","Job name"], ascending=[True, True, True, True]).reset_index(drop=True)
 
     active_only = show[show["Status"] == "Active"].copy()
-    hold_only = show[show["Status"] == "On hold"].copy()
-    total_hours_active = float(active_only["Required hours"].sum()) if not active_only.empty else 0.0
-    total_hours_backlog = float(hold_only["Required hours"].sum()) if not hold_only.empty else 0.0
     overtime_needed_hours = 0.0
     overtime_members = set()
     overtime_due_dates = []
@@ -1097,16 +1094,14 @@ with tabs[0]:
                 overtime_members.add(member)
                 overtime_due_dates.append(due)
 
-    offset_capacity_hours = 0.0
-    if overtime_needed_hours > 0 and len(overtime_due_dates) > 0:
-        cutoff_date = max(overtime_due_dates)
+    def compute_offset_capacity_until(cutoff_date: date) -> float:
+        total = 0.0
         # Use all team members except overloaded ones so idle capacity is counted.
         helper_members = [m for m in team_members if m not in overtime_members]
         for member in helper_members:
             cfg = member_working_cfg.get(member, {})
             weekdays = cfg.get("weekdays")
             if weekdays is None:
-                # weekdays are captured indirectly in member settings
                 weekdays = st.session_state["member_settings"][member]["weekdays"]
             non_working = set(st.session_state["member_settings"][member]["leave_dates"])
             sdate = st.session_state["member_settings"][member].get("start_date", date.today())
@@ -1128,7 +1123,14 @@ with tabs[0]:
             )
             alloc = alloc[(alloc["Date"] >= date.today()) & (alloc["Date"] <= cutoff_date)].copy()
             if not alloc.empty:
-                offset_capacity_hours += float(alloc["Free hours"].sum())
+                total += float(alloc["Free hours"].sum())
+        return total
+
+    offset_capacity_hours = 0.0
+    offset_before_first_overtime_hours = 0.0
+    if overtime_needed_hours > 0 and len(overtime_due_dates) > 0:
+        offset_capacity_hours = compute_offset_capacity_until(max(overtime_due_dates))
+        offset_before_first_overtime_hours = compute_offset_capacity_until(min(overtime_due_dates))
 
     due_tracked = active_only.dropna(subset=["Due date", "Finish date"]).copy() if not active_only.empty else pd.DataFrame()
     if due_tracked.empty:
@@ -1142,11 +1144,14 @@ with tabs[0]:
 
     cols = st.columns([1.2,1.2,1.2,1.2])
     with cols[0]:
-        render_kpi(
-            "Active scheduled hours",
-            f"{total_hours_active:.1f}",
-            "Sum of active job durations",
-        )
+        if overtime_needed_hours <= 0:
+            render_kpi("Offset before first overtime (hrs)", "-", "No overtime currently required")
+        else:
+            render_kpi(
+                "Offset before first overtime (hrs)",
+                f"{offset_before_first_overtime_hours:.1f}",
+                "Free hours from other team members before first overtime due date",
+            )
     with cols[1]:
         if overtime_needed_hours <= 0:
             render_kpi("Offset capacity (hrs)", "-", "No overtime currently required")
