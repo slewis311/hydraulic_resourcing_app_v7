@@ -756,7 +756,10 @@ def style_schedule(df: pd.DataFrame):
                 else:
                     styles.loc[i, "Due date"] = "background-color: rgba(231, 76, 60, 0.25);"
         return styles
-    return df.style.apply(apply_styles, axis=None)
+    styler = df.style.apply(apply_styles, axis=None)
+    if "Required hours" in df.columns:
+        styler = styler.format({"Required hours": "{:.1f}"})
+    return styler
 
 def render_kpi(label: str, value: str, note: str) -> None:
     st.markdown(
@@ -1040,8 +1043,8 @@ with tabs[0]:
     offset_capacity_hours = 0.0
     if overtime_needed_hours > 0 and len(overtime_due_dates) > 0:
         cutoff_date = max(overtime_due_dates)
-        active_members_with_jobs = set(active_only["Assignee"].astype(str).unique().tolist()) if not active_only.empty else set()
-        helper_members = [m for m in active_members_with_jobs if m not in overtime_members]
+        # Use all team members except overloaded ones so idle capacity is counted.
+        helper_members = [m for m in team_members if m not in overtime_members]
         for member in helper_members:
             cfg = member_working_cfg.get(member, {})
             weekdays = cfg.get("weekdays")
@@ -1094,7 +1097,7 @@ with tabs[0]:
             render_kpi(
                 "Offset capacity (hrs)",
                 f"{offset_capacity_hours:.1f}",
-                "Free hours from other active members before overtime due dates",
+                "Free hours from other team members before overtime due dates",
             )
     with cols[2]:
         render_kpi(
