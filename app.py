@@ -52,32 +52,138 @@ from datetime import date, timedelta
 st.markdown(
     '''
     <style>
-      .block-container { padding-top: 3.8rem; padding-bottom: 2rem; }
-      .app-title { font-size: 2.0rem; font-weight: 700; margin-bottom: 0.2rem; }
-      .app-sub { color: rgba(49, 51, 63, 0.7); margin-top: 0rem; }
-      .card { border: 1px solid rgba(49, 51, 63, 0.12); border-radius: 14px; padding: 14px 16px; background: white; }
-      .metric-note { font-size: 0.85rem; color: rgba(49, 51, 63, 0.65); margin-top: 0.15rem; }
-      .section-title { font-size: 1.25rem; font-weight: 650; margin-top: 0.25rem; }
+      @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700;800&family=IBM+Plex+Sans:wght@400;500;600&display=swap');
+      :root {
+        --bg-a: #d8d2d2;
+        --bg-b: #c7babc;
+        --ink-1: #1b2b36;
+        --ink-2: #4f626d;
+        --line: rgba(31, 111, 138, 0.24);
+        --brand: #32a7b4;
+        --brand-dark: #1f6f8a;
+        --accent: #f2cf21;
+        --card: #ffffff;
+      }
+      .stApp {
+        background:
+          radial-gradient(1200px 480px at 85% -10%, rgba(50,167,180,0.22), transparent 62%),
+          linear-gradient(180deg, var(--bg-a), var(--bg-b));
+      }
+      .block-container { padding-top: 3.8rem; padding-bottom: 2rem; max-width: 1320px; }
+      html, body, [class*="css"] { font-family: "IBM Plex Sans", sans-serif; color: var(--ink-1); }
+      .app-hero {
+        background: linear-gradient(135deg, #1f6f8a, #32a7b4);
+        border: 1px solid rgba(255,255,255,0.18);
+        border-radius: 16px;
+        padding: 20px 22px 18px 22px;
+        margin-bottom: 0.65rem;
+        box-shadow: 0 12px 30px rgba(20, 64, 80, 0.22);
+        position: relative;
+      }
+      .app-hero::after {
+        content: "";
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        height: 4px;
+        background: linear-gradient(90deg, var(--accent), rgba(242, 207, 33, 0.25));
+        border-radius: 0 0 16px 16px;
+      }
+      .hero-chip {
+        display: inline-block;
+        background: rgba(242, 207, 33, 0.2);
+        color: #fff8d4;
+        border: 1px solid rgba(255, 232, 138, 0.55);
+        border-radius: 999px;
+        padding: 4px 11px;
+        font-size: 0.76rem;
+        font-weight: 700;
+        letter-spacing: 0.03em;
+        text-transform: uppercase;
+        margin-bottom: 9px;
+      }
+      .app-title { font-family: "Manrope", sans-serif; font-size: 2.1rem; font-weight: 800; margin-bottom: 0.1rem; color: #f7fbff; }
+      .app-sub { color: rgba(236, 247, 255, 0.92); margin-top: 0.1rem; font-size: 1.01rem; }
+      .card {
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        padding: 14px 16px;
+        background: linear-gradient(180deg, #ffffff, #f8f6f6);
+        box-shadow: 0 8px 20px rgba(31, 111, 138, 0.08);
+      }
+      .metric-note { font-size: 0.84rem; color: var(--ink-2); margin-top: 0.15rem; }
+      .section-title {
+        font-family: "Manrope", sans-serif;
+        font-size: 1.25rem;
+        font-weight: 750;
+        margin-top: 0.25rem;
+        color: #143344;
+      }
       .calendar-table { border-collapse: collapse; width: 100%; table-layout: fixed; }
-      .calendar-table th { text-align: left; font-size: 0.85rem; padding: 8px; color: rgba(49,51,63,0.75); border-bottom: 1px solid rgba(49,51,63,0.12); }
-      .calendar-table td { vertical-align: top; padding: 10px; border: 1px solid rgba(49,51,63,0.08); height: 86px; }
-      .cal-date { font-weight: 650; font-size: 0.85rem; margin-bottom: 6px; }
+      .calendar-table th { text-align: left; font-size: 0.84rem; padding: 8px; color: var(--ink-2); border-bottom: 1px solid var(--line); }
+      .calendar-table td { vertical-align: top; padding: 10px; border: 1px solid rgba(36,62,79,0.09); height: 86px; background: #ffffffcc; }
+      .cal-date { font-weight: 680; font-size: 0.85rem; margin-bottom: 6px; color: #1f3c4f; }
       .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 0.78rem; }
-      .pill-green { background: rgba(46, 204, 113, 0.18); }
-      .pill-red { background: rgba(231, 76, 60, 0.18); }
-      .pill-amber { background: rgba(241, 196, 15, 0.18); }
-      .mini { color: rgba(49,51,63,0.75); font-size: 0.8rem; margin-top: 4px; }
-      .mini-job { color: rgba(49,51,63,0.82); font-size: 0.78rem; margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .pill-green { background: rgba(28, 170, 108, 0.2); }
+      .pill-red { background: rgba(207, 79, 66, 0.2); }
+      .pill-amber { background: rgba(233, 169, 40, 0.23); }
+      .mini { color: var(--ink-2); font-size: 0.8rem; margin-top: 4px; }
+      .mini-job { color: #27485c; font-size: 0.78rem; margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      [data-testid="stSidebar"] {
+        background: linear-gradient(180deg, #d6cbcc, #cec2c4);
+        border-right: 1px solid rgba(31, 111, 138, 0.24);
+      }
+      [data-testid="stSidebar"] h3 { color: #1d3b4f; font-family: "Manrope", sans-serif; }
+      [data-testid="stSidebar"] .stButton > button {
+        border-radius: 10px;
+        border: 1px solid rgba(31,111,138,0.38);
+        background: #f4efef;
+      }
+      [data-testid="stSidebar"] .stButton > button:hover {
+        border-color: var(--accent);
+        color: var(--brand-dark);
+        background: #fffbe8;
+      }
+      .stTabs [role="tablist"] { gap: 10px; border-bottom: 1px solid var(--line); }
+      .stTabs [role="tab"] {
+        background: #ffffffb5;
+        border: 1px solid transparent;
+        border-radius: 10px 10px 0 0;
+        padding: 8px 14px;
+      }
+      .stTabs [aria-selected="true"] {
+        border-color: rgba(31,111,138,0.38);
+        box-shadow: inset 0 -3px 0 var(--accent);
+        color: var(--brand-dark);
+        font-weight: 700;
+      }
+      [data-testid="stDataFrame"] {
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        overflow: hidden;
+        background: #ffffffd9;
+      }
       @media (max-width: 900px) {
         .block-container { padding-top: 4.4rem; }
+        .app-title { font-size: 1.72rem; }
+        .app-hero { padding: 16px; }
       }
     </style>
     ''',
     unsafe_allow_html=True
 )
 
-st.markdown('<div class="app-title">Hydraulic Resourcing App</div>', unsafe_allow_html=True)
-st.markdown('<div class="app-sub">Team scheduling, priority queues, and completion forecasting</div>', unsafe_allow_html=True)
+st.markdown(
+    '''
+    <div class="app-hero">
+      <div class="hero-chip">Resourcing Control</div>
+      <div class="app-title">Hydraulic Resourcing App</div>
+      <div class="app-sub">Team scheduling, priority queues, and completion forecasting</div>
+    </div>
+    ''',
+    unsafe_allow_html=True
+)
 
 WEEKDAY_MAP = [("Mon", 0), ("Tue", 1), ("Wed", 2), ("Thu", 3), ("Fri", 4), ("Sat", 5), ("Sun", 6)]
 LABEL_TO_INT = {k: v for k, v in WEEKDAY_MAP}
