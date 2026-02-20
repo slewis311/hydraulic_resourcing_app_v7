@@ -325,6 +325,43 @@ st.markdown(
         color: #143746;
         line-height: 1.05;
       }
+      .health-wrap {
+        margin-top: 10px;
+        margin-bottom: 8px;
+      }
+      .health-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        border-radius: 999px;
+        padding: 7px 12px;
+        border: 1px solid rgba(16,36,47,0.15);
+        background: rgba(255,255,255,0.9);
+        font-weight: 700;
+        color: #143746;
+      }
+      .health-dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        display: inline-block;
+      }
+      .health-healthy .health-dot { background: #2dbb77; }
+      .health-warning .health-dot { background: #f0c92d; }
+      .health-critical .health-dot { background: #d9534f; }
+      .kpi-health-value {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-family: "Manrope", sans-serif;
+        font-size: 1.55rem;
+        font-weight: 800;
+        color: #143746;
+        line-height: 1.1;
+      }
+      .dot-healthy { background: #2dbb77; }
+      .dot-warning { background: #f0c92d; }
+      .dot-critical { background: #d9534f; }
       .table-shell {
         border: 1px solid rgba(31,126,151,0.20);
         border-radius: 16px;
@@ -1142,7 +1179,28 @@ with tabs[0]:
         on_time_pct_text = f"{on_time_pct:.0f}%"
         on_time_note = f"{on_time_count} of {len(due_tracked)} due-dated active jobs on time"
 
-    cols = st.columns([1.2,1.2,1.2,1.2])
+    if overtime_needed_hours <= 0:
+        health_label = "Healthy"
+        health_note = "No overtime currently required"
+        dot_class = "dot-healthy"
+    elif overtime_needed_hours < offset_before_first_overtime_hours and overtime_needed_hours < offset_capacity_hours:
+        health_label = "Healthy"
+        health_note = "Available offset capacity covers overtime before and across due dates"
+        dot_class = "dot-healthy"
+    elif overtime_needed_hours > offset_before_first_overtime_hours and overtime_needed_hours < offset_capacity_hours:
+        health_label = "Early warning"
+        health_note = "Short before first due date, but recoverable before all due dates"
+        dot_class = "dot-warning"
+    elif overtime_needed_hours > offset_before_first_overtime_hours and overtime_needed_hours > offset_capacity_hours:
+        health_label = "Critical"
+        health_note = "Offset capacity is below overtime needed"
+        dot_class = "dot-critical"
+    else:
+        health_label = "Early warning"
+        health_note = "Capacity is tightening; monitor and rebalance work"
+        dot_class = "dot-warning"
+
+    cols = st.columns([1,1,1,1,1])
     with cols[0]:
         if overtime_needed_hours <= 0:
             render_kpi("Offset before first overtime (hrs)", "-", "No overtime currently required")
@@ -1169,6 +1227,17 @@ with tabs[0]:
         )
     with cols[3]:
         render_kpi("On-time jobs %", on_time_pct_text, on_time_note)
+    with cols[4]:
+        st.markdown(
+            (
+                "<div class='kpi-card'>"
+                "<div class='kpi-head'>Delivery health</div>"
+                f"<div class='kpi-health-value'><span class='health-dot {dot_class}'></span>{health_label}</div>"
+                f"<div class='metric-note'>{health_note}</div>"
+                "</div>"
+            ),
+            unsafe_allow_html=True,
+        )
 
     st.markdown('<div class="table-shell">', unsafe_allow_html=True)
     st.dataframe(style_schedule(show), use_container_width=True)
