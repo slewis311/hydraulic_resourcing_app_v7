@@ -348,6 +348,7 @@ st.markdown(
       }
       .health-healthy .health-dot { background: #2dbb77; }
       .health-warning .health-dot { background: #f29d2d; }
+      .health-early .health-dot { background: #f0c92d; }
       .health-critical .health-dot { background: #d9534f; }
       .kpi-health-value {
         display: flex;
@@ -361,6 +362,7 @@ st.markdown(
       }
       .dot-healthy { background: #2dbb77; }
       .dot-warning { background: #f29d2d; }
+      .dot-early { background: #f0c92d; }
       .dot-critical { background: #d9534f; }
       .table-shell {
         border: 1px solid rgba(31,126,151,0.20);
@@ -1188,13 +1190,13 @@ with tabs[0]:
         health_note = "Offset capacity is below overtime needed"
         dot_class = "dot-critical"
     elif overtime_needed_hours > offset_before_first_overtime_hours:
-        health_label = "Early warning"
-        health_note = "Overtime exceeds early offset capacity; rebalance now"
+        health_label = "Warning"
+        health_note = "Overtime required to achieve due dates; immediate rebalance needed"
         dot_class = "dot-warning"
     else:
-        health_label = "Watch"
-        health_note = "Overtime exists but is still within early offset capacity"
-        dot_class = "dot-warning"
+        health_label = "Early warning"
+        health_note = "Resource overload; consider reallocation"
+        dot_class = "dot-early"
 
     cols = st.columns([1,1,1,1,1])
     with cols[0]:
