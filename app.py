@@ -405,14 +405,6 @@ def ensure_member_settings(members: list[str]) -> None:
         if m not in members:
             del ms[m]
 
-init_local_state_if_missing()
-if "cloud_load_attempted" not in st.session_state:
-    st.session_state["cloud_load_attempted"] = True
-    payload, msg = fetch_state_from_cloud()
-    st.session_state["cloud_sync_message"] = msg
-    if payload is not None:
-        apply_state_payload(payload)
-
 def clean_jobs_df(df: pd.DataFrame) -> pd.DataFrame:
     if df is None or not isinstance(df, pd.DataFrame) or df.empty:
         return pd.DataFrame(columns=JOB_COLS)
@@ -436,6 +428,14 @@ def clean_jobs_df(df: pd.DataFrame) -> pd.DataFrame:
     df["Notes"] = df["Notes"].astype(str).replace("nan", "")
 
     return df.reset_index(drop=True)
+
+init_local_state_if_missing()
+if "cloud_load_attempted" not in st.session_state:
+    st.session_state["cloud_load_attempted"] = True
+    payload, msg = fetch_state_from_cloud()
+    st.session_state["cloud_sync_message"] = msg
+    if payload is not None:
+        apply_state_payload(payload)
 
 def add_status_columns(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
