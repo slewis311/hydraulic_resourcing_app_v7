@@ -1,4 +1,8 @@
 import streamlit as st
+import os
+import pandas as pd
+import numpy as np
+from datetime import date, timedelta, datetime
 
 
 def get_secret(name: str) -> str:
@@ -9,6 +13,48 @@ def get_secret(name: str) -> str:
     if value:
         return value
     return os.environ.get(name, "")
+
+def norm_json_value(x):
+    try:
+        if pd.isna(x):
+            return None
+    except Exception:
+        pass
+    if isinstance(x, (np.integer,)):
+        return int(x)
+    if isinstance(x, (np.floating, float)):
+        try:
+            if float(x) != float(x):
+                return None
+        except Exception:
+            pass
+        return float(x)
+    if isinstance(x, datetime):
+        return x.isoformat()
+    if isinstance(x, date):
+        return x.isoformat()
+    return x
+
+def norm_date_value(x):
+    try:
+        if pd.isna(x):
+            return None
+    except Exception:
+        pass
+    if x is None:
+        return None
+    if isinstance(x, datetime):
+        return x.date().isoformat()
+    if isinstance(x, date):
+        return x.isoformat()
+    try:
+        if hasattr(x, 'to_pydatetime'):
+            return x.to_pydatetime().date().isoformat()
+    except Exception:
+        pass
+    s = str(x).strip()
+    return s if s else None
+
 
 def require_login():
     st.set_page_config(page_title="Hydraulic Resourcing App", layout="wide")
@@ -180,23 +226,18 @@ def seed_if_empty(supabase):
         mapped = []
         for r in default_jobs:
             mapped.append({
-                "job_name": r.get("Job name"),
-                "required_hours": float(r.get("Required hours", 0.0)) if r.get("Required hours") is not None else 0.0,
-                "priority": int(r.get("Priority", 0)) if r.get("Priority") is not None else 0,
-                "assignee": r.get("Assignee"),
-                "due_date": r.get("Due date"),
-                "notes": r.get("Notes", ""),
+                "job_name": norm_json_value(r.get("Job name")),
+                "required_hours": float(norm_json_value(r.get("Required hours", 0.0)) or 0.0),
+                "priority": int(norm_json_value(r.get("Priority", 0)) or 0),
+                "assignee": norm_json_value(r.get("Assignee")),
+                "due_date": norm_date_value(r.get("Due date")),
+                "notes": norm_json_value(r.get("Notes", "")) or "",
             })
         if len(mapped) > 0:
             # Use composite key job_name and assignee for prototype simplicity
             db_upsert_rows(supabase, "jobs", mapped, "job_name,assignee")
 
 def sync_session_from_db(team_rows, jobs_rows, settings_rows, leave_rows):
-    import pandas as pd
-import numpy as np
-import math
-import datetime
-from datetime import date
 
     team_df = pd.DataFrame(team_rows) if len(team_rows) > 0 else pd.DataFrame(columns=["member","daily_hours"])
     if "Member" not in team_df.columns:
@@ -225,7 +266,6 @@ from datetime import date
 
     st.session_state["team"] = team_df
     st.session_state["jobs_raw"] = jobs_df
-    persist_team_and_jobs(supabase)
 
     # Settings and leave
     if "member_settings" not in st.session_state:
@@ -260,7 +300,7 @@ def persist_team_and_jobs(supabase):
     if team_df is not None and hasattr(team_df, "to_dict"):
         rows = []
         for r in team_df.to_dict(orient="records"):
-            rows.append({"member": r.get("Member"), "daily_hours": float(r.get("Daily hours", 8.0))})
+            rows.append({"member": norm_json_value(r.get("Member")), "daily_hours": float(norm_json_value(r.get("Daily hours", 8.0)) or 8.0)})
         db_upsert_rows(supabase, "team_members", rows, "member")
 
     # Persist jobs
@@ -269,19 +309,17 @@ def persist_team_and_jobs(supabase):
         rows = []
         for r in jobs_df.to_dict(orient="records"):
             rows.append({
-                "job_name": r.get("Job name"),
-                "required_hours": float(r.get("Required hours", 0.0)) if r.get("Required hours") is not None else 0.0,
-                "priority": int(r.get("Priority", 0)) if r.get("Priority") is not None else 0,
-                "assignee": r.get("Assignee"),
-                "due_date": r.get("Due date"),
-                "notes": r.get("Notes", ""),
+                "job_name": norm_json_value(r.get("Job name")),
+                "required_hours": float(norm_json_value(r.get("Required hours", 0.0)) or 0.0),
+                "priority": int(norm_json_value(r.get("Priority", 0)) or 0),
+                "assignee": norm_json_value(r.get("Assignee")),
+                "due_date": norm_date_value(r.get("Due date")),
+                "notes": norm_json_value(r.get("Notes", "")) or "",
             })
         if len(rows) > 0:
             db_upsert_rows(supabase, "jobs", rows, "job_name,assignee")
 
 
-import pandas as pd
-from datetime import date, timedelta
 
 st.markdown(
     '''
