@@ -204,6 +204,61 @@ st.markdown(
         overflow: hidden;
         background: rgba(255,255,255,0.88);
       }
+      [data-testid="stDataFrame"] [role="columnheader"] {
+        background: linear-gradient(180deg, rgba(255,255,255,0.98), rgba(238,247,250,0.95));
+        color: #1f4658;
+        font-weight: 700;
+        border-bottom: 1px solid rgba(31,126,151,0.2);
+      }
+      [data-testid="stDataFrame"] [role="gridcell"] {
+        border-color: rgba(16,36,47,0.08);
+      }
+      [data-testid="stDataFrame"] [role="row"]:hover [role="gridcell"] {
+        background: rgba(36,167,179,0.08);
+      }
+      [data-testid="stDataEditor"] {
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        overflow: hidden;
+        background: rgba(255,255,255,0.9);
+      }
+      [data-testid="stDataEditor"] [role="columnheader"] {
+        background: linear-gradient(180deg, rgba(255,255,255,0.98), rgba(239,248,251,0.95));
+        color: #1d4a5c;
+        font-weight: 700;
+        border-bottom: 1px solid rgba(31,126,151,0.2);
+      }
+      [data-testid="stDataEditor"] [role="gridcell"] {
+        border-color: rgba(16,36,47,0.08);
+      }
+      [data-testid="stDataEditor"] [role="row"]:hover [role="gridcell"] {
+        background: rgba(36,167,179,0.08);
+      }
+      .kpi-card {
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        padding: 10px 12px 12px 12px;
+        background: rgba(255,255,255,0.9);
+        box-shadow: 0 8px 18px rgba(31,126,151,0.1);
+      }
+      .kpi-head {
+        font-size: 0.8rem;
+        font-weight: 700;
+        color: #1c5b72;
+        background: linear-gradient(90deg, rgba(36,167,179,0.18), rgba(239,231,63,0.28));
+        border: 1px solid rgba(31,126,151,0.25);
+        border-radius: 999px;
+        padding: 4px 10px;
+        display: inline-block;
+        margin-bottom: 8px;
+      }
+      .kpi-value {
+        font-family: "Manrope", sans-serif;
+        font-size: 2rem;
+        font-weight: 800;
+        color: #143746;
+        line-height: 1.05;
+      }
       .stDownloadButton button {
         border-radius: 12px;
         border: 1px solid rgba(31,126,151,0.36);
@@ -626,6 +681,18 @@ def style_schedule(df: pd.DataFrame):
         return styles
     return df.style.apply(apply_styles, axis=None)
 
+def render_kpi(label: str, value: str, note: str) -> None:
+    st.markdown(
+        (
+            "<div class='kpi-card'>"
+            f"<div class='kpi-head'>{label}</div>"
+            f"<div class='kpi-value'>{value}</div>"
+            f"<div class='metric-note'>{note}</div>"
+            "</div>"
+        ),
+        unsafe_allow_html=True,
+    )
+
 def render_capacity_calendar(alloc: pd.DataFrame, start: date, end: date, weekdays: set[int], day_jobs: dict[date, list[str]] | None = None):
     free_map = {}
     alloc_map = {}
@@ -829,21 +896,21 @@ with tabs[0]:
 
     cols = st.columns([1.2,1.2,1.2,1.2])
     with cols[0]:
-        st.markdown('<div class="card">', unsafe_allow_html=True)
-        st.metric("Forecast finish date", "" if forecast_finish is None else str(forecast_finish))
-        st.markdown('<div class="metric-note">Latest finish across active work</div></div>', unsafe_allow_html=True)
+        render_kpi(
+            "Forecast finish date",
+            "" if forecast_finish is None else str(forecast_finish),
+            "Latest finish across active work",
+        )
     with cols[1]:
-        st.markdown('<div class="card">', unsafe_allow_html=True)
-        st.metric("Active scheduled hours", f"{total_hours_active:.1f}")
-        st.markdown('<div class="metric-note">Sum of active job durations</div></div>', unsafe_allow_html=True)
+        render_kpi(
+            "Active scheduled hours",
+            f"{total_hours_active:.1f}",
+            "Sum of active job durations",
+        )
     with cols[2]:
-        st.markdown('<div class="card">', unsafe_allow_html=True)
-        st.metric("Jobs", f"{total_jobs}")
-        st.markdown('<div class="metric-note">Active and on hold</div></div>', unsafe_allow_html=True)
+        render_kpi("Jobs", f"{total_jobs}", "Active and on hold")
     with cols[3]:
-        st.markdown('<div class="card">', unsafe_allow_html=True)
-        st.metric("Active members", f"{active_members}")
-        st.markdown('<div class="metric-note">Members with active work</div></div>', unsafe_allow_html=True)
+        render_kpi("Active members", f"{active_members}", "Members with active work")
 
     st.dataframe(style_schedule(show), use_container_width=True)
 
