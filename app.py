@@ -84,15 +84,13 @@ def require_login():
         unsafe_allow_html=True
     )
 
-    st.markdown('<div class="login-wrap"><div class="login-card">', unsafe_allow_html=True)
-    st.markdown('<div class="login-hero"><div class="login-title">Hydraulic Resourcing App</div><div class="login-sub">Admin login required</div></div>', unsafe_allow_html=True)
-
-    pwd = st.text_input("Password", type="password")
-    col1, col2 = st.columns([1, 2])
-    with col1:
-        sign_in = st.button("Sign in", use_container_width=True)
-    with col2:
-        st.caption("Set APP_PASSWORD in Streamlit secrets")
+    left_spacer, center_col, right_spacer = st.columns([1.2, 2.2, 1.2])
+    with center_col:
+        st.markdown('<div class="login-hero"><div class="login-title">Hydraulic Resourcing App</div><div class="login-sub">Admin login required</div></div>', unsafe_allow_html=True)
+        pwd = st.text_input("Password", type="password")
+        col1, _ = st.columns([1, 1.4])
+        with col1:
+            sign_in = st.button("Sign in", use_container_width=True)
 
     if sign_in:
         expected = st.secrets.get("APP_PASSWORD", "")
@@ -102,7 +100,6 @@ def require_login():
         else:
             st.error("Incorrect password")
 
-    st.markdown('</div></div>', unsafe_allow_html=True)
     st.stop()
 
 require_login()
