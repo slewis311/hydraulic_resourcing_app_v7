@@ -1091,7 +1091,11 @@ with tabs[1]:
         st.session_state["jobs_raw"] = combined_norm
         selected_norm = combined_norm[combined_norm["Assignee"] == selected_member][JOB_COLS].reset_index(drop=True)
         edited_cmp = edited[JOB_COLS].reset_index(drop=True)
-        if not selected_norm.equals(edited_cmp):
+        selected_norm_cmp = clean_jobs_df(selected_norm).reset_index(drop=True)
+        edited_norm_cmp = clean_jobs_df(edited_cmp).reset_index(drop=True)
+        if len(selected_norm_cmp) == 0 and len(edited_norm_cmp) == 0:
+            pass
+        elif not selected_norm_cmp.equals(edited_norm_cmp):
             st.session_state.pop(editor_key, None)
             st.rerun()
 
