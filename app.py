@@ -1,5 +1,6 @@
 import streamlit as st
 import requests
+from bisect import bisect_right
 
 def require_login():
     st.set_page_config(page_title="Hydraulic Resourcing App", layout="wide")
@@ -677,6 +678,11 @@ def add_months(d: date, months: int) -> date:
 def month_end(d: date) -> date:
     return add_months(month_start(d), 1) - timedelta(days=1)
 
+def due_cutoff_hours(due_date: date, working_dates: list[date], daily_hours: float) -> float:
+    # Capacity available up to and including due_date, based on member calendar.
+    idx = bisect_right(working_dates, due_date)
+    return float(idx) * float(daily_hours)
+
 def ensure_member_settings(members: list[str]) -> None:
     if "member_settings" not in st.session_state:
         st.session_state["member_settings"] = {}
@@ -809,8 +815,12 @@ def render_capacity_calendar(alloc: pd.DataFrame, start: date, end: date, weekda
         for d in week:
             in_range = (d >= start and d <= end)
             is_workday = d.weekday() in weekdays
+            is_past = d < date.today()
             if not in_range:
                 html += "<td style='background: rgba(49,51,63,0.02);'></td>"
+                continue
+            if is_past:
+                html += f"<td style='background: rgba(49,51,63,0.03);'><div class='cal-date'>{ordinal_day(d.day)}</div><div class='mini'>Past day</div></td>"
                 continue
             if not is_workday:
                 html += f"<td style='background: rgba(49,51,63,0.03);'><div class='cal-date'>{ordinal_day(d.day)}</div><div class='mini'>Non working</div></td>"
@@ -948,6 +958,7 @@ with tabs[0]:
 
     scheduled_all = []
     hold_rows = []
+    member_working_cfg = {}
 
     for member in team_members:
         member_jobs = jobs_norm[jobs_norm["Assignee"] == member].copy()
@@ -967,6 +978,10 @@ with tabs[0]:
         non_working = set(ms["leave_dates"])
         sdate = ms.get("start_date", date.today())
         daily_hours = float(member_hours.get(member, 8.0))
+        member_working_cfg[member] = {
+            "working_dates": build_working_dates(sdate, weekdays, non_working, horizon_days=3650),
+            "daily_hours": daily_hours,
+        }
 
         sched = schedule_member_jobs(active, sdate, daily_hours, weekdays, non_working)
         sched["Assignee"] = member
@@ -998,8 +1013,31 @@ with tabs[0]:
     hold_only = show[show["Status"] == "On hold"].copy()
     total_hours_active = float(active_only["Required hours"].sum()) if not active_only.empty else 0.0
     total_hours_backlog = float(hold_only["Required hours"].sum()) if not hold_only.empty else 0.0
-    total_jobs = int(len(show))
-    active_members = int(active_only["Assignee"].nunique()) if not active_only.empty else 0
+    overtime_needed_hours = 0.0
+    if len(scheduled_all) > 0:
+        for _, row in pd.concat(scheduled_all, ignore_index=True).iterrows():
+            due = row.get("Due date")
+            if due is None or pd.isna(due):
+                continue
+            member = str(row.get("Assignee", ""))
+            cfg = member_working_cfg.get(member, {})
+            working_dates = cfg.get("working_dates", [])
+            daily_hours = float(cfg.get("daily_hours", 0.0))
+            if not working_dates or daily_hours <= 0:
+                continue
+            cutoff = due_cutoff_hours(due, working_dates, daily_hours)
+            finish_h = float(row.get("Finish hour index", 0.0))
+            overtime_needed_hours += max(0.0, finish_h - cutoff)
+
+    due_tracked = active_only.dropna(subset=["Due date", "Finish date"]).copy() if not active_only.empty else pd.DataFrame()
+    if due_tracked.empty:
+        on_time_pct_text = "N/A"
+        on_time_note = "Set due dates to track on-time %"
+    else:
+        on_time_count = int((due_tracked["Finish date"] <= due_tracked["Due date"]).sum())
+        on_time_pct = (on_time_count / len(due_tracked)) * 100.0
+        on_time_pct_text = f"{on_time_pct:.0f}%"
+        on_time_note = f"{on_time_count} of {len(due_tracked)} due-dated active jobs on time"
 
     cols = st.columns([1.2,1.2,1.2,1.2])
     with cols[0]:
@@ -1015,9 +1053,13 @@ with tabs[0]:
             "Sum of on hold job durations",
         )
     with cols[2]:
-        render_kpi("Jobs", f"{total_jobs}", "Active and on hold")
+        render_kpi(
+            "Overtime needed (hrs)",
+            f"{overtime_needed_hours:.1f}",
+            "Additional hours needed to recover overdue due-dated active jobs",
+        )
     with cols[3]:
-        render_kpi("Active members", f"{active_members}", "Members with active work")
+        render_kpi("On-time jobs %", on_time_pct_text, on_time_note)
 
     st.markdown('<div class="table-shell">', unsafe_allow_html=True)
     st.dataframe(style_schedule(show), use_container_width=True)
