@@ -52,33 +52,34 @@ from datetime import date, timedelta
 st.markdown(
     '''
     <style>
-      @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700;800&family=IBM+Plex+Sans:wght@400;500;600&display=swap');
+      @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600&display=swap');
       :root {
-        --bg-a: #d8d2d2;
-        --bg-b: #c7babc;
-        --ink-1: #1b2b36;
-        --ink-2: #4f626d;
-        --line: rgba(31, 111, 138, 0.24);
-        --brand: #32a7b4;
-        --brand-dark: #1f6f8a;
-        --accent: #f2cf21;
+        --bg-a: #d4d4d4;
+        --bg-b: #d0d0d0;
+        --ink-1: #122630;
+        --ink-2: #4f636e;
+        --line: rgba(18, 38, 48, 0.14);
+        --brand: #24a7b3;
+        --brand-dark: #1f7e97;
+        --accent: #efe73f;
         --card: #ffffff;
       }
       .stApp {
         background:
-          radial-gradient(1200px 480px at 85% -10%, rgba(50,167,180,0.22), transparent 62%),
+          radial-gradient(1200px 500px at 82% -12%, rgba(36,167,179,0.25), transparent 62%),
           linear-gradient(180deg, var(--bg-a), var(--bg-b));
       }
       .block-container { padding-top: 3.8rem; padding-bottom: 2rem; max-width: 1320px; }
-      html, body, [class*="css"] { font-family: "IBM Plex Sans", sans-serif; color: var(--ink-1); }
+      html, body, [class*="css"] { font-family: "Plus Jakarta Sans", sans-serif; color: var(--ink-1); }
       .app-hero {
-        background: linear-gradient(135deg, #1f6f8a, #32a7b4);
-        border: 1px solid rgba(255,255,255,0.18);
-        border-radius: 16px;
-        padding: 20px 22px 18px 22px;
-        margin-bottom: 0.65rem;
-        box-shadow: 0 12px 30px rgba(20, 64, 80, 0.22);
+        background: linear-gradient(135deg, #197992, #24a7b3);
+        border: 1px solid rgba(255,255,255,0.22);
+        border-radius: 18px;
+        padding: 22px 24px 20px 24px;
+        margin-bottom: 0.75rem;
+        box-shadow: 0 16px 34px rgba(20, 62, 75, 0.25);
         position: relative;
+        overflow: hidden;
       }
       .app-hero::after {
         content: "";
@@ -86,87 +87,107 @@ st.markdown(
         left: 0;
         right: 0;
         bottom: 0;
-        height: 4px;
-        background: linear-gradient(90deg, var(--accent), rgba(242, 207, 33, 0.25));
-        border-radius: 0 0 16px 16px;
+        height: 5px;
+        background: linear-gradient(90deg, var(--accent), rgba(239, 231, 63, 0.15));
+        border-radius: 0 0 18px 18px;
+      }
+      .app-hero::before {
+        content: "";
+        position: absolute;
+        width: 260px;
+        height: 260px;
+        right: -80px;
+        top: -120px;
+        border-radius: 50%;
+        background: radial-gradient(circle, rgba(255,255,255,0.32), rgba(255,255,255,0.02));
       }
       .hero-chip {
         display: inline-block;
-        background: rgba(242, 207, 33, 0.2);
-        color: #fff8d4;
-        border: 1px solid rgba(255, 232, 138, 0.55);
+        background: rgba(239, 231, 63, 0.22);
+        color: #fffce0;
+        border: 1px solid rgba(255, 247, 151, 0.62);
         border-radius: 999px;
-        padding: 4px 11px;
-        font-size: 0.76rem;
+        padding: 4px 10px;
+        font-size: 0.72rem;
         font-weight: 700;
-        letter-spacing: 0.03em;
+        letter-spacing: 0.06em;
         text-transform: uppercase;
-        margin-bottom: 9px;
+        margin-bottom: 10px;
       }
-      .app-title { font-family: "Manrope", sans-serif; font-size: 2.1rem; font-weight: 800; margin-bottom: 0.1rem; color: #f7fbff; }
-      .app-sub { color: rgba(236, 247, 255, 0.92); margin-top: 0.1rem; font-size: 1.01rem; }
+      .app-title { font-family: "Manrope", sans-serif; font-size: 2.15rem; font-weight: 800; margin-bottom: 0.12rem; color: #f8fdff; letter-spacing: -0.02em; }
+      .app-sub { color: rgba(240, 249, 252, 0.94); margin-top: 0.1rem; font-size: 1rem; }
       .card {
         border: 1px solid var(--line);
-        border-radius: 14px;
+        border-radius: 16px;
         padding: 14px 16px;
-        background: linear-gradient(180deg, #ffffff, #f8f6f6);
-        box-shadow: 0 8px 20px rgba(31, 111, 138, 0.08);
+        background: rgba(255,255,255,0.84);
+        backdrop-filter: blur(4px);
+        box-shadow: 0 10px 24px rgba(16, 35, 47, 0.08);
       }
       .metric-note { font-size: 0.84rem; color: var(--ink-2); margin-top: 0.15rem; }
       .section-title {
         font-family: "Manrope", sans-serif;
-        font-size: 1.25rem;
-        font-weight: 750;
+        font-size: 1.24rem;
+        font-weight: 800;
         margin-top: 0.25rem;
-        color: #143344;
+        color: #133242;
+        letter-spacing: -0.01em;
       }
       .calendar-table { border-collapse: collapse; width: 100%; table-layout: fixed; }
-      .calendar-table th { text-align: left; font-size: 0.84rem; padding: 8px; color: var(--ink-2); border-bottom: 1px solid var(--line); }
-      .calendar-table td { vertical-align: top; padding: 10px; border: 1px solid rgba(36,62,79,0.09); height: 86px; background: #ffffffcc; }
+      .calendar-table th { text-align: left; font-size: 0.82rem; padding: 8px; color: var(--ink-2); border-bottom: 1px solid var(--line); }
+      .calendar-table td { vertical-align: top; padding: 10px; border: 1px solid rgba(18,38,48,0.1); height: 86px; background: rgba(255,255,255,0.82); }
       .cal-date { font-weight: 680; font-size: 0.85rem; margin-bottom: 6px; color: #1f3c4f; }
       .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 0.78rem; }
       .pill-green { background: rgba(28, 170, 108, 0.2); }
       .pill-red { background: rgba(207, 79, 66, 0.2); }
-      .pill-amber { background: rgba(233, 169, 40, 0.23); }
+      .pill-amber { background: rgba(239, 231, 63, 0.34); }
       .mini { color: var(--ink-2); font-size: 0.8rem; margin-top: 4px; }
       .mini-job { color: #27485c; font-size: 0.78rem; margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
       [data-testid="stSidebar"] {
-        background: linear-gradient(180deg, #d6cbcc, #cec2c4);
-        border-right: 1px solid rgba(31, 111, 138, 0.24);
+        background: linear-gradient(180deg, #d8d8d8, #d1d1d1);
+        border-right: 1px solid rgba(18,38,48,0.16);
       }
       [data-testid="stSidebar"] h3 { color: #1d3b4f; font-family: "Manrope", sans-serif; }
       [data-testid="stSidebar"] .stButton > button {
-        border-radius: 10px;
-        border: 1px solid rgba(31,111,138,0.38);
-        background: #f4efef;
+        border-radius: 12px;
+        border: 1px solid rgba(31,126,151,0.35);
+        background: rgba(255,255,255,0.72);
+        transition: all 140ms ease;
       }
       [data-testid="stSidebar"] .stButton > button:hover {
-        border-color: var(--accent);
+        border-color: var(--brand);
         color: var(--brand-dark);
-        background: #fffbe8;
+        background: linear-gradient(135deg, rgba(239,231,63,0.24), rgba(255,255,255,0.85));
+        transform: translateY(-1px);
       }
-      .stTabs [role="tablist"] { gap: 10px; border-bottom: 1px solid var(--line); }
+      .stTabs [role="tablist"] { gap: 8px; border-bottom: none; }
       .stTabs [role="tab"] {
-        background: #ffffffb5;
-        border: 1px solid transparent;
-        border-radius: 10px 10px 0 0;
+        background: rgba(255,255,255,0.58);
+        border: 1px solid rgba(18,38,48,0.08);
+        border-radius: 999px;
         padding: 8px 14px;
       }
       .stTabs [aria-selected="true"] {
-        border-color: rgba(31,111,138,0.38);
-        box-shadow: inset 0 -3px 0 var(--accent);
+        border-color: rgba(31,126,151,0.35);
+        box-shadow: 0 0 0 2px rgba(239,231,63,0.45) inset;
         color: var(--brand-dark);
         font-weight: 700;
+        background: rgba(255,255,255,0.95);
       }
       [data-testid="stDataFrame"] {
         border: 1px solid var(--line);
-        border-radius: 12px;
+        border-radius: 14px;
         overflow: hidden;
-        background: #ffffffd9;
+        background: rgba(255,255,255,0.88);
+      }
+      .stDownloadButton button {
+        border-radius: 12px;
+        border: 1px solid rgba(31,126,151,0.36);
+        background: linear-gradient(135deg, rgba(36,167,179,0.14), rgba(255,255,255,0.95));
       }
       @media (max-width: 900px) {
         .block-container { padding-top: 4.4rem; }
-        .app-title { font-size: 1.72rem; }
+        .app-title { font-size: 1.76rem; }
         .app-hero { padding: 16px; }
       }
     </style>
