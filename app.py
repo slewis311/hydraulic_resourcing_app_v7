@@ -1,4 +1,5 @@
 import streamlit as st
+import requests
 
 def require_login():
     st.set_page_config(page_title="Hydraulic Resourcing App", layout="wide")
@@ -79,6 +80,20 @@ LABEL_TO_INT = {k: v for k, v in WEEKDAY_MAP}
 INT_TO_LABEL = {v: k for k, v in WEEKDAY_MAP}
 
 JOB_COLS = ["Job name", "Required hours", "Priority", "Assignee", "Due date", "Notes"]
+SUPABASE_STATE_TABLE = "app_state"
+SUPABASE_STATE_ID = "main"
+
+DEFAULT_TEAM_ROWS = [
+    {"Member": "SL", "Daily hours": 8.0},
+    {"Member": "LS", "Daily hours": 8.0},
+    {"Member": "LB", "Daily hours": 8.0},
+]
+
+DEFAULT_JOBS_ROWS = [
+    {"Job name": "Job B", "Required hours": 8.0, "Priority": 1, "Assignee": "SL", "Due date": None, "Notes": ""},
+    {"Job name": "Job A", "Required hours": 16.0, "Priority": 2, "Assignee": "SL", "Due date": None, "Notes": ""},
+    {"Job name": "Backlog item", "Required hours": 6.0, "Priority": 0, "Assignee": "SL", "Due date": None, "Notes": "On hold"},
+]
 
 def build_working_dates(start_date: date, weekdays: set[int], non_working_dates: set[date], horizon_days: int = 3650) -> list[date]:
     dates = []
@@ -88,6 +103,169 @@ def build_working_dates(start_date: date, weekdays: set[int], non_working_dates:
             dates.append(d)
         d = d + timedelta(days=1)
     return dates
+
+def get_supabase_config() -> tuple[str, str, bool]:
+    url = st.secrets.get("SUPABASE_URL", "").strip().rstrip("/")
+    key = st.secrets.get("SUPABASE_ANON_KEY", "").strip()
+    return url, key, bool(url and key)
+
+def _safe_date(value) -> date | None:
+    dt = pd.to_datetime(value, errors="coerce")
+    if pd.isna(dt):
+        return None
+    return dt.date()
+
+def _default_member_settings(members: list[str]) -> dict:
+    out = {}
+    for m in members:
+        out[m] = {"weekdays": {0, 1, 2, 3, 4}, "leave_dates": [], "start_date": date.today()}
+    return out
+
+def _normalize_team_df(df: pd.DataFrame) -> pd.DataFrame:
+    if df is None or not isinstance(df, pd.DataFrame) or df.empty:
+        return pd.DataFrame(DEFAULT_TEAM_ROWS)
+    out = df.copy()
+    if "Member" not in out.columns:
+        out["Member"] = None
+    if "Daily hours" not in out.columns:
+        out["Daily hours"] = None
+    out = out[["Member", "Daily hours"]]
+    out = out.dropna(subset=["Member", "Daily hours"], how="any")
+    out = out[out["Member"].astype(str).str.len() > 0]
+    out["Daily hours"] = pd.to_numeric(out["Daily hours"], errors="coerce")
+    out = out[out["Daily hours"] >= 1.0]
+    out = out.reset_index(drop=True)
+    return out if not out.empty else pd.DataFrame(DEFAULT_TEAM_ROWS)
+
+def init_local_state_if_missing() -> None:
+    if "team" not in st.session_state:
+        st.session_state["team"] = pd.DataFrame(DEFAULT_TEAM_ROWS)
+    if "jobs_raw" not in st.session_state:
+        st.session_state["jobs_raw"] = pd.DataFrame(DEFAULT_JOBS_ROWS)
+    if "member_settings" not in st.session_state:
+        members = st.session_state["team"]["Member"].astype(str).tolist()
+        st.session_state["member_settings"] = _default_member_settings(members)
+
+def serialize_state_payload() -> dict:
+    team_df = _normalize_team_df(st.session_state.get("team", pd.DataFrame(DEFAULT_TEAM_ROWS)))
+    jobs_df = clean_jobs_df(st.session_state.get("jobs_raw", pd.DataFrame(columns=JOB_COLS)))
+    ms = st.session_state.get("member_settings", {})
+
+    team_records = team_df.to_dict(orient="records")
+    jobs_records = []
+    for row in jobs_df.to_dict(orient="records"):
+        due = _safe_date(row.get("Due date"))
+        jobs_records.append(
+            {
+                "Job name": str(row.get("Job name", "")),
+                "Required hours": float(row.get("Required hours", 0.0)),
+                "Priority": int(row.get("Priority", 0)),
+                "Assignee": str(row.get("Assignee", "")),
+                "Due date": None if due is None else due.isoformat(),
+                "Notes": str(row.get("Notes", "")),
+            }
+        )
+
+    settings_records = {}
+    for member, cfg in ms.items():
+        weekdays = sorted([int(x) for x in cfg.get("weekdays", {0, 1, 2, 3, 4})])
+        leave_dates = []
+        for d in cfg.get("leave_dates", []):
+            parsed = _safe_date(d)
+            if parsed is not None:
+                leave_dates.append(parsed.isoformat())
+        start = _safe_date(cfg.get("start_date", date.today()))
+        settings_records[str(member)] = {
+            "weekdays": weekdays,
+            "leave_dates": leave_dates,
+            "start_date": date.today().isoformat() if start is None else start.isoformat(),
+        }
+
+    return {"team": team_records, "jobs_raw": jobs_records, "member_settings": settings_records}
+
+def apply_state_payload(payload: dict) -> None:
+    team_df = _normalize_team_df(pd.DataFrame(payload.get("team", DEFAULT_TEAM_ROWS)))
+    st.session_state["team"] = team_df
+
+    jobs_df = pd.DataFrame(payload.get("jobs_raw", DEFAULT_JOBS_ROWS))
+    if "Due date" in jobs_df.columns:
+        jobs_df["Due date"] = pd.to_datetime(jobs_df["Due date"], errors="coerce").dt.date
+    st.session_state["jobs_raw"] = clean_jobs_df(jobs_df)
+
+    members = team_df["Member"].astype(str).tolist()
+    defaults = _default_member_settings(members)
+    incoming = payload.get("member_settings", {})
+    loaded = {}
+    if isinstance(incoming, dict):
+        for m in members:
+            cfg = incoming.get(m, {})
+            weekdays_raw = cfg.get("weekdays", [0, 1, 2, 3, 4])
+            weekdays = set()
+            for w in weekdays_raw:
+                try:
+                    wi = int(w)
+                except Exception:
+                    continue
+                if 0 <= wi <= 6:
+                    weekdays.add(wi)
+            if len(weekdays) == 0:
+                weekdays = {0, 1, 2, 3, 4}
+            leave_dates = []
+            for d in cfg.get("leave_dates", []):
+                parsed = _safe_date(d)
+                if parsed is not None:
+                    leave_dates.append(parsed)
+            start = _safe_date(cfg.get("start_date"))
+            loaded[m] = {
+                "weekdays": weekdays,
+                "leave_dates": leave_dates,
+                "start_date": date.today() if start is None else start,
+            }
+    for m in members:
+        if m not in loaded:
+            loaded[m] = defaults[m]
+    st.session_state["member_settings"] = loaded
+
+def fetch_state_from_cloud() -> tuple[dict | None, str]:
+    url, key, ready = get_supabase_config()
+    if not ready:
+        return None, "SUPABASE_URL or SUPABASE_ANON_KEY is missing in Streamlit secrets."
+    endpoint = f"{url}/rest/v1/{SUPABASE_STATE_TABLE}"
+    headers = {"apikey": key, "Authorization": f"Bearer {key}"}
+    params = {"select": "payload", "id": f"eq.{SUPABASE_STATE_ID}", "limit": "1"}
+    try:
+        resp = requests.get(endpoint, headers=headers, params=params, timeout=12)
+        if resp.status_code >= 400:
+            return None, f"Cloud load failed ({resp.status_code}): {resp.text[:180]}"
+        rows = resp.json()
+        if not rows:
+            return None, "No cloud snapshot found yet."
+        payload = rows[0].get("payload")
+        if not isinstance(payload, dict):
+            return None, "Cloud payload is invalid."
+        return payload, "Cloud snapshot loaded."
+    except Exception as exc:
+        return None, f"Cloud load failed: {exc}"
+
+def save_state_to_cloud() -> tuple[bool, str]:
+    url, key, ready = get_supabase_config()
+    if not ready:
+        return False, "SUPABASE_URL or SUPABASE_ANON_KEY is missing in Streamlit secrets."
+    endpoint = f"{url}/rest/v1/{SUPABASE_STATE_TABLE}"
+    headers = {
+        "apikey": key,
+        "Authorization": f"Bearer {key}",
+        "Content-Type": "application/json",
+        "Prefer": "resolution=merge-duplicates,return=representation",
+    }
+    body = [{"id": SUPABASE_STATE_ID, "payload": serialize_state_payload()}]
+    try:
+        resp = requests.post(endpoint, headers=headers, json=body, timeout=12)
+        if resp.status_code >= 400:
+            return False, f"Cloud save failed ({resp.status_code}): {resp.text[:180]}"
+        return True, "Saved to cloud."
+    except Exception as exc:
+        return False, f"Cloud save failed: {exc}"
 
 def normalize_active_priorities(jobs: pd.DataFrame) -> pd.DataFrame:
     if jobs.empty:
@@ -196,6 +374,14 @@ def ensure_member_settings(members: list[str]) -> None:
     for m in list(ms.keys()):
         if m not in members:
             del ms[m]
+
+init_local_state_if_missing()
+if "cloud_load_attempted" not in st.session_state:
+    st.session_state["cloud_load_attempted"] = True
+    payload, msg = fetch_state_from_cloud()
+    st.session_state["cloud_sync_message"] = msg
+    if payload is not None:
+        apply_state_payload(payload)
 
 def clean_jobs_df(df: pd.DataFrame) -> pd.DataFrame:
     if df is None or not isinstance(df, pd.DataFrame) or df.empty:
@@ -316,15 +502,6 @@ def render_capacity_calendar(alloc: pd.DataFrame, start: date, end: date, weekda
 with st.sidebar:
     st.subheader("Team")
 
-    if "team" not in st.session_state:
-        st.session_state["team"] = pd.DataFrame(
-            [
-                {"Member": "SL", "Daily hours": 8.0},
-                {"Member": "LS", "Daily hours": 8.0},
-                {"Member": "LB", "Daily hours": 8.0},
-            ]
-        )
-
     team_df = st.data_editor(
         st.session_state["team"],
         num_rows="dynamic",
@@ -340,6 +517,28 @@ with st.sidebar:
     team_df = team_df[team_df["Member"].astype(str).str.len() > 0].reset_index(drop=True)
     st.session_state["team"] = team_df
 
+    st.divider()
+    st.subheader("Cloud sync")
+    st.caption("Uses SUPABASE_URL and SUPABASE_ANON_KEY from Streamlit secrets.")
+    if st.button("Save to cloud", use_container_width=True):
+        ok, msg = save_state_to_cloud()
+        st.session_state["cloud_sync_message"] = msg
+        if ok:
+            st.success(msg)
+        else:
+            st.error(msg)
+    if st.button("Reload from cloud", use_container_width=True):
+        payload, msg = fetch_state_from_cloud()
+        st.session_state["cloud_sync_message"] = msg
+        if payload is not None:
+            apply_state_payload(payload)
+            st.success(msg)
+            st.rerun()
+        else:
+            st.info(msg)
+    if "cloud_sync_message" in st.session_state:
+        st.caption(f"Status: {st.session_state['cloud_sync_message']}")
+
 team_members = team_df["Member"].astype(str).tolist() if not team_df.empty else []
 member_hours = {row["Member"]: float(row["Daily hours"]) for _, row in team_df.iterrows()} if not team_df.empty else {}
 
@@ -348,15 +547,6 @@ if len(team_members) == 0:
     st.stop()
 
 ensure_member_settings(team_members)
-
-if "jobs_raw" not in st.session_state:
-    st.session_state["jobs_raw"] = pd.DataFrame(
-        [
-            {"Job name": "Job B", "Required hours": 8.0, "Priority": 1, "Assignee": "SL", "Due date": None, "Notes": ""},
-            {"Job name": "Job A", "Required hours": 16.0, "Priority": 2, "Assignee": "SL", "Due date": None, "Notes": ""},
-            {"Job name": "Backlog item", "Required hours": 6.0, "Priority": 0, "Assignee": "SL", "Due date": None, "Notes": "On hold"},
-        ]
-    )
 
 tabs = st.tabs(["Team dashboard", "Staff pages", "Availability"])
 
