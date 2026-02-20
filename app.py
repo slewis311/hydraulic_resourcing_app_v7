@@ -32,8 +32,39 @@ def require_login():
             backdrop-filter: blur(6px);
             box-shadow: 0 14px 30px rgba(16, 35, 47, 0.10);
           }
-          .login-title { font-family: "Manrope", sans-serif; font-size: 2rem; font-weight: 800; margin-bottom: 0.25rem; color: #123645; }
-          .login-sub { color: #4a6270; margin-bottom: 1rem; }
+          .login-hero {
+            background: linear-gradient(135deg, #167f99, #24a7b3 55%, #59c0c9);
+            border: 1px solid rgba(255,255,255,0.35);
+            border-radius: 14px;
+            padding: 14px 16px 12px 16px;
+            margin-bottom: 14px;
+            box-shadow:
+              0 12px 24px rgba(22, 92, 113, 0.24),
+              0 0 0 1px rgba(255,255,255,0.24) inset;
+            position: relative;
+            overflow: hidden;
+          }
+          .login-hero::after {
+            content: "";
+            position: absolute;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            height: 4px;
+            background: linear-gradient(90deg, #efe73f, rgba(239, 231, 63, 0.22));
+          }
+          .login-hero::before {
+            content: "";
+            position: absolute;
+            width: 180px;
+            height: 180px;
+            right: -64px;
+            top: -96px;
+            border-radius: 50%;
+            background: radial-gradient(circle, rgba(255,255,255,0.34), rgba(255,255,255,0.03));
+          }
+          .login-title { font-family: "Manrope", sans-serif; font-size: 2rem; font-weight: 800; margin-bottom: 0.15rem; color: #f7fcff; letter-spacing: -0.01em; }
+          .login-sub { color: rgba(237, 248, 252, 0.95); margin-bottom: 0; }
           .login-card [data-testid="stTextInput"] input {
             border-radius: 12px;
             border: 1px solid rgba(31,126,151,0.26);
@@ -54,8 +85,7 @@ def require_login():
     )
 
     st.markdown('<div class="login-wrap"><div class="login-card">', unsafe_allow_html=True)
-    st.markdown('<div class="login-title">Hydraulic Resourcing App</div>', unsafe_allow_html=True)
-    st.markdown('<div class="login-sub">Admin login required</div>', unsafe_allow_html=True)
+    st.markdown('<div class="login-hero"><div class="login-title">Hydraulic Resourcing App</div><div class="login-sub">Admin login required</div></div>', unsafe_allow_html=True)
 
     pwd = st.text_input("Password", type="password")
     col1, col2 = st.columns([1, 2])
