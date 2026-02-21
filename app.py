@@ -408,6 +408,24 @@ st.markdown(
         border-color: rgba(31,126,151,0.35);
         background: rgba(36,167,179,0.12);
       }
+      .leave-cal .stButton > button {
+        min-height: 2.1rem;
+        padding: 0.1rem 0.2rem;
+        border-radius: 10px;
+        font-size: 0.9rem;
+        font-weight: 600;
+        line-height: 1.05;
+        white-space: nowrap;
+      }
+      .leave-cal .mini {
+        margin-top: 2px;
+        margin-bottom: 2px;
+        text-align: center;
+      }
+      .leave-cal .cal-nav {
+        padding-top: 2px;
+        padding-bottom: 2px;
+      }
       .stDownloadButton button {
         border-radius: 12px;
         border: 1px solid rgba(31,126,151,0.36);
@@ -1301,12 +1319,13 @@ with tabs[1]:
 
         st.caption("Leave dates and shutdown dates")
         st.markdown('<div class="table-shell">', unsafe_allow_html=True)
+        st.markdown('<div class="leave-cal">', unsafe_allow_html=True)
         leave_month_key = f"leave_month_{selected_member}"
         if leave_month_key not in st.session_state:
             st.session_state[leave_month_key] = month_start(date.today())
         st.session_state[leave_month_key] = month_start(st.session_state[leave_month_key])
 
-        nav_l, nav_c, nav_r = st.columns([1, 3, 1])
+        nav_l, nav_c, nav_r = st.columns([0.85, 3.3, 0.85], gap="small")
         with nav_l:
             if st.button("◀", key=f"leave_prev_{selected_member}", use_container_width=True):
                 st.session_state[leave_month_key] = add_months(st.session_state[leave_month_key], -1)
@@ -1328,12 +1347,12 @@ with tabs[1]:
                 leave_set.add(parsed.date())
 
         headers = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
-        hcols = st.columns(7)
+        hcols = st.columns(7, gap="small")
         for i, h in enumerate(headers):
             hcols[i].markdown(f"<div class='mini'><b>{h}</b></div>", unsafe_allow_html=True)
 
         for week in month_grid_days(st.session_state[leave_month_key]):
-            wcols = st.columns(7)
+            wcols = st.columns(7, gap="small")
             for i, day_val in enumerate(week):
                 if day_val is None:
                     wcols[i].markdown("&nbsp;", unsafe_allow_html=True)
@@ -1354,9 +1373,7 @@ with tabs[1]:
 
         st.caption("Click a day to toggle non-working.")
         st.markdown('</div>', unsafe_allow_html=True)
-
-        st.write("Daily hours")
-        st.write(f"{member_hours.get(selected_member, 8.0):.1f}")
+        st.markdown('</div>', unsafe_allow_html=True)
 
     with right:
         st.write("Jobs for selected staff member")
