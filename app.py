@@ -421,6 +421,12 @@ st.markdown(
       .leave-cal .stButton > button span {
         white-space: nowrap !important;
         word-break: keep-all !important;
+        overflow-wrap: normal !important;
+        hyphens: none !important;
+      }
+      .leave-cal .stButton > button p {
+        margin: 0 !important;
+        letter-spacing: 0 !important;
       }
       .leave-cal .mini {
         margin-top: 2px;
