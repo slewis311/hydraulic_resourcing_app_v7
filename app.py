@@ -412,16 +412,17 @@ st.markdown(
         display: flex !important;
         align-items: center !important;
         justify-content: center !important;
-        min-height: 2.1rem;
-        min-width: 2.55rem;
-        padding: 0.1rem 0.2rem;
-        border-radius: 10px;
-        font-size: 0.9rem;
+        min-height: 1.9rem;
+        min-width: 2.05rem;
+        padding: 0 !important;
+        border-radius: 9px;
+        font-size: 0.82rem;
         font-weight: 600;
-        line-height: 1.05;
+        line-height: 1;
         white-space: nowrap;
         word-break: normal !important;
         overflow-wrap: normal !important;
+        font-variant-numeric: tabular-nums;
       }
       .leave-cal .stButton > button * {
         white-space: nowrap !important;
@@ -429,6 +430,8 @@ st.markdown(
         overflow-wrap: normal !important;
         hyphens: none !important;
         text-align: center !important;
+        display: inline !important;
+        line-height: 1 !important;
       }
       .leave-cal .stButton > button p {
         margin: 0 !important;
@@ -444,12 +447,12 @@ st.markdown(
         padding-bottom: 2px;
       }
       .leave-day {
-        min-height: 2.1rem;
-        border-radius: 10px;
+        min-height: 1.9rem;
+        border-radius: 9px;
         display: flex;
         align-items: center;
         justify-content: center;
-        font-size: 0.9rem;
+        font-size: 0.82rem;
         font-weight: 600;
       }
       .leave-day-past {
@@ -1349,14 +1352,14 @@ with tabs[1]:
         st.session_state["member_settings"][selected_member]["weekdays"] = set(LABEL_TO_INT[x] for x in chosen)
 
         st.caption("Leave dates and shutdown dates")
-        st.markdown('<div class="table-shell">', unsafe_allow_html=True)
+        st.markdown('<div class="table-shell" style="padding:6px;">', unsafe_allow_html=True)
         st.markdown('<div class="leave-cal">', unsafe_allow_html=True)
         leave_month_key = f"leave_month_{selected_member}"
         if leave_month_key not in st.session_state:
             st.session_state[leave_month_key] = month_start(date.today())
         st.session_state[leave_month_key] = month_start(st.session_state[leave_month_key])
 
-        nav_l, nav_c, nav_r = st.columns([0.85, 3.3, 0.85], gap="small")
+        nav_l, nav_c, nav_r = st.columns([0.75, 3.6, 0.75], gap="small")
         with nav_l:
             if st.button("◀", key=f"leave_prev_{selected_member}", use_container_width=True):
                 st.session_state[leave_month_key] = add_months(st.session_state[leave_month_key], -1)
