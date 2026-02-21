@@ -457,6 +457,14 @@ st.markdown(
         white-space: normal;
         word-break: break-all;
       }
+      .leave-day-text {
+        display: inline;
+        white-space: normal;
+        word-break: break-all;
+        overflow-wrap: anywhere;
+        line-height: 1;
+        text-align: center;
+      }
       .leave-day-past {
         border: 1px solid rgba(18,38,48,0.10);
         background: rgba(49,51,63,0.10);
@@ -1394,7 +1402,7 @@ with tabs[1]:
                     wcols[i].markdown("&nbsp;", unsafe_allow_html=True)
                     continue
                 if day_val < date.today():
-                    wcols[i].markdown(f"<div class='leave-day leave-day-past'>{day_val.day}</div>", unsafe_allow_html=True)
+                    wcols[i].markdown(f"<div class='leave-day leave-day-past'><span class='leave-day-text'>{day_val.day}</span></div>", unsafe_allow_html=True)
                     continue
                 is_off = day_val in leave_set
                 if wcols[i].button(
