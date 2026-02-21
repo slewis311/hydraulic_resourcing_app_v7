@@ -461,6 +461,22 @@ st.markdown(
         background: rgba(49,51,63,0.10);
         color: rgba(49,51,63,0.60);
       }
+      .leave-mini .calendar-table th {
+        font-size: 0.78rem;
+        padding: 6px;
+      }
+      .leave-mini .calendar-table td {
+        height: 58px;
+        padding: 7px;
+      }
+      .leave-mini .cal-date {
+        font-size: 0.8rem;
+        margin-bottom: 4px;
+      }
+      .leave-mini .mini {
+        font-size: 0.74rem;
+        margin-top: 2px;
+      }
       .stDownloadButton button {
         border-radius: 12px;
         border: 1px solid rgba(31,126,151,0.36);
@@ -1016,6 +1032,39 @@ def render_capacity_calendar(alloc: pd.DataFrame, start: date, end: date, weekda
         html += "</tr>"
     html += "</tbody></table>"
     st.markdown(html, unsafe_allow_html=True)
+
+def render_leave_month_preview(anchor_month: date, leave_dates: set[date]):
+    start = month_start(anchor_month)
+    end = month_end(anchor_month)
+    week_start = start - timedelta(days=start.weekday())
+    week_end = end + timedelta(days=(6 - end.weekday()))
+
+    grid_days = []
+    d = week_start
+    while d <= week_end:
+        grid_days.append(d)
+        d = d + timedelta(days=1)
+    rows = [grid_days[i:i+7] for i in range(0, len(grid_days), 7)]
+
+    header = "".join([f"<th>{lab}</th>" for lab, _ in WEEKDAY_MAP])
+    html = f"<table class='calendar-table'><thead><tr>{header}</tr></thead><tbody>"
+    for week in rows:
+        html += "<tr>"
+        for d in week:
+            in_month = (d.month == anchor_month.month and d.year == anchor_month.year)
+            if not in_month:
+                html += "<td style='background: rgba(49,51,63,0.02);'></td>"
+                continue
+            if d < date.today():
+                html += f"<td style='background: rgba(49,51,63,0.03);'><div class='cal-date'>{ordinal_day(d.day)}</div><div class='mini'>Past day</div></td>"
+                continue
+            if d in leave_dates:
+                html += f"<td><div class='cal-date'>{ordinal_day(d.day)}</div><span class='pill pill-red'>Non working</span></td>"
+            else:
+                html += f"<td><div class='cal-date'>{ordinal_day(d.day)}</div><span class='pill pill-green'>Working</span></td>"
+        html += "</tr>"
+    html += "</tbody></table>"
+    st.markdown("<div class='leave-mini'>" + html + "</div>", unsafe_allow_html=True)
 
 with st.sidebar:
     st.subheader("Team")
