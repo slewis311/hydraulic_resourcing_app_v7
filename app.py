@@ -417,6 +417,11 @@ st.markdown(
         line-height: 1.05;
         white-space: nowrap;
       }
+      .leave-cal .stButton > button p,
+      .leave-cal .stButton > button span {
+        white-space: nowrap !important;
+        word-break: keep-all !important;
+      }
       .leave-cal .mini {
         margin-top: 2px;
         margin-bottom: 2px;
@@ -425,6 +430,20 @@ st.markdown(
       .leave-cal .cal-nav {
         padding-top: 2px;
         padding-bottom: 2px;
+      }
+      .leave-day {
+        min-height: 2.1rem;
+        border-radius: 10px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 0.9rem;
+        font-weight: 600;
+      }
+      .leave-day-past {
+        border: 1px solid rgba(18,38,48,0.10);
+        background: rgba(49,51,63,0.10);
+        color: rgba(49,51,63,0.60);
       }
       .stDownloadButton button {
         border-radius: 12px;
@@ -1356,6 +1375,9 @@ with tabs[1]:
             for i, day_val in enumerate(week):
                 if day_val is None:
                     wcols[i].markdown("&nbsp;", unsafe_allow_html=True)
+                    continue
+                if day_val < date.today():
+                    wcols[i].markdown(f"<div class='leave-day leave-day-past'>{day_val.day}</div>", unsafe_allow_html=True)
                     continue
                 is_off = day_val in leave_set
                 if wcols[i].button(
