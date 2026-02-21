@@ -1054,6 +1054,12 @@ with tabs[0]:
 
     st.divider()
     st.subheader("Schedule output")
+    if st.button("Refresh outputs", key="refresh_outputs_btn"):
+        st.session_state.pop("jobs_editor", None)
+        staff_keys = [k for k in list(st.session_state.keys()) if str(k).startswith("member_jobs_editor_")]
+        for k in staff_keys:
+            st.session_state.pop(k, None)
+        st.rerun()
 
     scheduled_all = []
     hold_rows = []
@@ -1114,24 +1120,34 @@ with tabs[0]:
     overtime_needed_hours = 0.0
     overtime_members = set()
     overtime_due_dates = []
-    if len(scheduled_all) > 0:
-        for _, row in pd.concat(scheduled_all, ignore_index=True).iterrows():
+    # Compute overtime as max deficit per member (not sum per job) to avoid double-counting.
+    for member, sched_member in member_active_sched.items():
+        if sched_member is None or sched_member.empty:
+            continue
+        cfg = member_working_cfg.get(member, {})
+        working_dates = cfg.get("working_dates", [])
+        daily_hours = float(cfg.get("daily_hours", 0.0))
+        if not working_dates or daily_hours <= 0:
+            continue
+
+        due_rows = sched_member.dropna(subset=["Due date"]).copy()
+        if due_rows.empty:
+            continue
+
+        member_max_deficit = 0.0
+        for _, row in due_rows.iterrows():
             due = row.get("Due date")
-            if due is None or pd.isna(due):
-                continue
-            member = str(row.get("Assignee", ""))
-            cfg = member_working_cfg.get(member, {})
-            working_dates = cfg.get("working_dates", [])
-            daily_hours = float(cfg.get("daily_hours", 0.0))
-            if not working_dates or daily_hours <= 0:
-                continue
             cutoff = due_cutoff_hours(due, working_dates, daily_hours)
             finish_h = float(row.get("Finish hour index", 0.0))
-            over = max(0.0, finish_h - cutoff)
-            overtime_needed_hours += over
-            if over > 0.0:
-                overtime_members.add(member)
+            deficit = max(0.0, finish_h - cutoff)
+            if deficit > member_max_deficit:
+                member_max_deficit = deficit
+            if deficit > 0.0:
                 overtime_due_dates.append(due)
+
+        overtime_needed_hours += member_max_deficit
+        if member_max_deficit > 0.0:
+            overtime_members.add(member)
 
     def compute_offset_capacity_until(cutoff_date: date) -> float:
         total = 0.0
