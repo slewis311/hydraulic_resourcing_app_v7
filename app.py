@@ -409,20 +409,26 @@ st.markdown(
         background: rgba(36,167,179,0.12);
       }
       .leave-cal .stButton > button {
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
         min-height: 2.1rem;
+        min-width: 2.55rem;
         padding: 0.1rem 0.2rem;
         border-radius: 10px;
         font-size: 0.9rem;
         font-weight: 600;
         line-height: 1.05;
         white-space: nowrap;
+        word-break: normal !important;
+        overflow-wrap: normal !important;
       }
-      .leave-cal .stButton > button p,
-      .leave-cal .stButton > button span {
+      .leave-cal .stButton > button * {
         white-space: nowrap !important;
-        word-break: keep-all !important;
+        word-break: normal !important;
         overflow-wrap: normal !important;
         hyphens: none !important;
+        text-align: center !important;
       }
       .leave-cal .stButton > button p {
         margin: 0 !important;
