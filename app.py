@@ -409,33 +409,31 @@ st.markdown(
         background: rgba(36,167,179,0.12);
       }
       .leave-cal .stButton > button {
-        display: flex !important;
+        display: inline-flex !important;
         align-items: center !important;
         justify-content: center !important;
-        min-height: 1.9rem;
-        min-width: 2.05rem;
+        min-height: 2rem;
+        min-width: 2.2rem;
         padding: 0 !important;
         border-radius: 9px;
-        font-size: 0.82rem;
-        font-weight: 600;
+        font-size: 0.78rem;
+        font-weight: 700;
         line-height: 1;
-        white-space: normal;
-        word-break: break-all !important;
-        overflow-wrap: anywhere !important;
-        font-variant-numeric: tabular-nums;
+        white-space: nowrap !important;
+        word-break: normal !important;
+        overflow-wrap: normal !important;
+        letter-spacing: 0.01em;
       }
       .leave-cal .stButton > button * {
-        white-space: normal !important;
-        word-break: break-all !important;
-        overflow-wrap: anywhere !important;
+        white-space: nowrap !important;
+        word-break: normal !important;
+        overflow-wrap: normal !important;
         hyphens: none !important;
         text-align: center !important;
-        display: inline !important;
         line-height: 1 !important;
       }
       .leave-cal .stButton > button p {
         margin: 0 !important;
-        letter-spacing: 0 !important;
       }
       .leave-cal .mini {
         margin-top: 2px;
@@ -447,21 +445,14 @@ st.markdown(
         padding-bottom: 2px;
       }
       .leave-day {
-        min-height: 1.9rem;
+        min-height: 2rem;
         border-radius: 9px;
         display: flex;
         align-items: center;
         justify-content: center;
-        font-size: 0.82rem;
-        font-weight: 600;
-        white-space: normal;
-        word-break: break-all;
-      }
-      .leave-day-text {
-        display: inline;
-        white-space: normal;
-        word-break: break-all;
-        overflow-wrap: anywhere;
+        font-size: 0.78rem;
+        font-weight: 700;
+        white-space: nowrap;
         line-height: 1;
         text-align: center;
       }
@@ -849,18 +840,6 @@ def month_grid_days(anchor_month: date) -> list[list[date | None]]:
     if trailing:
         days.extend([None] * trailing)
     return [days[i:i+7] for i in range(0, len(days), 7)]
-
-def stacked_day_label(n: int) -> str:
-    s = str(int(n))
-    if len(s) < 2:
-        return s
-    return "\n".join(list(s))
-
-def stacked_day_label_html(n: int) -> str:
-    s = str(int(n))
-    if len(s) < 2:
-        return s
-    return "<br>".join(list(s))
 
 def due_cutoff_hours(due_date: date, working_dates: list[date], daily_hours: float) -> float:
     # Capacity available up to and including due_date, based on member calendar.
@@ -1413,15 +1392,13 @@ with tabs[1]:
                 if day_val is None:
                     wcols[i].markdown("&nbsp;", unsafe_allow_html=True)
                     continue
+                day_label = f"{day_val.day:02d}"
                 if day_val < date.today():
-                    wcols[i].markdown(
-                        f"<div class='leave-day leave-day-past'><span class='leave-day-text'>{stacked_day_label_html(day_val.day)}</span></div>",
-                        unsafe_allow_html=True,
-                    )
+                    wcols[i].markdown(f"<div class='leave-day leave-day-past'>{day_label}</div>", unsafe_allow_html=True)
                     continue
                 is_off = day_val in leave_set
                 if wcols[i].button(
-                    stacked_day_label(day_val.day),
+                    day_label,
                     key=f"leave_day_{selected_member}_{day_val.isoformat()}",
                     use_container_width=True,
                     type="primary" if is_off else "secondary",
