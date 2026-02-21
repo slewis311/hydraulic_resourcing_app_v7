@@ -850,6 +850,18 @@ def month_grid_days(anchor_month: date) -> list[list[date | None]]:
         days.extend([None] * trailing)
     return [days[i:i+7] for i in range(0, len(days), 7)]
 
+def stacked_day_label(n: int) -> str:
+    s = str(int(n))
+    if len(s) < 2:
+        return s
+    return "\n".join(list(s))
+
+def stacked_day_label_html(n: int) -> str:
+    s = str(int(n))
+    if len(s) < 2:
+        return s
+    return "<br>".join(list(s))
+
 def due_cutoff_hours(due_date: date, working_dates: list[date], daily_hours: float) -> float:
     # Capacity available up to and including due_date, based on member calendar.
     idx = bisect_right(working_dates, due_date)
@@ -1402,11 +1414,14 @@ with tabs[1]:
                     wcols[i].markdown("&nbsp;", unsafe_allow_html=True)
                     continue
                 if day_val < date.today():
-                    wcols[i].markdown(f"<div class='leave-day leave-day-past'><span class='leave-day-text'>{day_val.day}</span></div>", unsafe_allow_html=True)
+                    wcols[i].markdown(
+                        f"<div class='leave-day leave-day-past'><span class='leave-day-text'>{stacked_day_label_html(day_val.day)}</span></div>",
+                        unsafe_allow_html=True,
+                    )
                     continue
                 is_off = day_val in leave_set
                 if wcols[i].button(
-                    str(day_val.day),
+                    stacked_day_label(day_val.day),
                     key=f"leave_day_{selected_member}_{day_val.isoformat()}",
                     use_container_width=True,
                     type="primary" if is_off else "secondary",
