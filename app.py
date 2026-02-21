@@ -774,6 +774,20 @@ def add_months(d: date, months: int) -> date:
 def month_end(d: date) -> date:
     return add_months(month_start(d), 1) - timedelta(days=1)
 
+def month_grid_days(anchor_month: date) -> list[list[date | None]]:
+    first = month_start(anchor_month)
+    last = month_end(anchor_month)
+    leading = first.weekday()  # Mon=0
+    days: list[date | None] = [None] * leading
+    d = first
+    while d <= last:
+        days.append(d)
+        d = d + timedelta(days=1)
+    trailing = (7 - (len(days) % 7)) % 7
+    if trailing:
+        days.extend([None] * trailing)
+    return [days[i:i+7] for i in range(0, len(days), 7)]
+
 def due_cutoff_hours(due_date: date, working_dates: list[date], daily_hours: float) -> float:
     # Capacity available up to and including due_date, based on member calendar.
     idx = bisect_right(working_dates, due_date)
@@ -972,7 +986,6 @@ with st.sidebar:
 
     st.divider()
     st.subheader("Cloud sync")
-    st.caption("Uses SUPABASE_URL and SUPABASE_ANON_KEY from Streamlit secrets.")
     if st.button("Save to cloud", use_container_width=True):
         ok, msg = save_state_to_cloud()
         st.session_state["cloud_sync_message"] = msg
@@ -1286,28 +1299,61 @@ with tabs[1]:
         )
         st.session_state["member_settings"][selected_member]["weekdays"] = set(LABEL_TO_INT[x] for x in chosen)
 
-        leave_key = f"leave_{selected_member}"
-        if leave_key not in st.session_state:
-            st.session_state[leave_key] = pd.DataFrame({"Date": pd.Series(dtype="datetime64[ns]")})
-            existing = st.session_state["member_settings"][selected_member]["leave_dates"]
-            if len(existing) > 0:
-                st.session_state[leave_key] = pd.DataFrame({"Date": pd.to_datetime(existing)})
-
         st.caption("Leave dates and shutdown dates")
         st.markdown('<div class="table-shell">', unsafe_allow_html=True)
-        leave_df = st.data_editor(
-            st.session_state[leave_key],
-            num_rows="dynamic",
-            use_container_width=True,
-            hide_index=True,
-            column_config={"Date": st.column_config.DateColumn(required=False)},
-            key=f"leave_editor_{selected_member}",
-        )
+        leave_month_key = f"leave_month_{selected_member}"
+        if leave_month_key not in st.session_state:
+            st.session_state[leave_month_key] = month_start(date.today())
+        st.session_state[leave_month_key] = month_start(st.session_state[leave_month_key])
+
+        nav_l, nav_c, nav_r = st.columns([1, 3, 1])
+        with nav_l:
+            if st.button("◀", key=f"leave_prev_{selected_member}", use_container_width=True):
+                st.session_state[leave_month_key] = add_months(st.session_state[leave_month_key], -1)
+                st.rerun()
+        with nav_c:
+            st.markdown(
+                f"<div class='cal-nav'>{st.session_state[leave_month_key].strftime('%B %Y')}</div>",
+                unsafe_allow_html=True,
+            )
+        with nav_r:
+            if st.button("▶", key=f"leave_next_{selected_member}", use_container_width=True):
+                st.session_state[leave_month_key] = add_months(st.session_state[leave_month_key], 1)
+                st.rerun()
+
+        leave_set = set()
+        for d in st.session_state["member_settings"][selected_member]["leave_dates"]:
+            parsed = pd.to_datetime(d, errors="coerce")
+            if pd.notna(parsed):
+                leave_set.add(parsed.date())
+
+        headers = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+        hcols = st.columns(7)
+        for i, h in enumerate(headers):
+            hcols[i].markdown(f"<div class='mini'><b>{h}</b></div>", unsafe_allow_html=True)
+
+        for week in month_grid_days(st.session_state[leave_month_key]):
+            wcols = st.columns(7)
+            for i, day_val in enumerate(week):
+                if day_val is None:
+                    wcols[i].markdown("&nbsp;", unsafe_allow_html=True)
+                    continue
+                is_off = day_val in leave_set
+                if wcols[i].button(
+                    str(day_val.day),
+                    key=f"leave_day_{selected_member}_{day_val.isoformat()}",
+                    use_container_width=True,
+                    type="primary" if is_off else "secondary",
+                ):
+                    if is_off:
+                        leave_set.remove(day_val)
+                    else:
+                        leave_set.add(day_val)
+                    st.session_state["member_settings"][selected_member]["leave_dates"] = sorted(list(leave_set))
+                    st.rerun()
+
+        st.caption("Click a day to toggle non-working.")
         st.markdown('</div>', unsafe_allow_html=True)
-        if "Date" in leave_df.columns:
-            leave_df["Date"] = pd.to_datetime(leave_df["Date"], errors="coerce").dt.date
-        st.session_state[leave_key] = leave_df
-        st.session_state["member_settings"][selected_member]["leave_dates"] = [d for d in leave_df["Date"].dropna().tolist()]
 
         st.write("Daily hours")
         st.write(f"{member_hours.get(selected_member, 8.0):.1f}")
