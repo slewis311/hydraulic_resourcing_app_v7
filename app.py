@@ -413,10 +413,10 @@ st.markdown(
         align-items: center !important;
         justify-content: center !important;
         min-height: 1.9rem;
-        min-width: 2.05rem;
+        min-width: 2.8rem;
         padding: 0 !important;
         border-radius: 9px;
-        font-size: 0.82rem;
+        font-size: 0.74rem;
         font-weight: 600;
         line-height: 1;
         white-space: nowrap;
@@ -452,8 +452,9 @@ st.markdown(
         display: flex;
         align-items: center;
         justify-content: center;
-        font-size: 0.82rem;
+        font-size: 0.74rem;
         font-weight: 600;
+        white-space: nowrap;
       }
       .leave-day-past {
         border: 1px solid rgba(18,38,48,0.10);
@@ -1392,11 +1393,11 @@ with tabs[1]:
                     wcols[i].markdown("&nbsp;", unsafe_allow_html=True)
                     continue
                 if day_val < date.today():
-                    wcols[i].markdown(f"<div class='leave-day leave-day-past'>{day_val.day}</div>", unsafe_allow_html=True)
+                    wcols[i].markdown(f"<div class='leave-day leave-day-past'>{ordinal_day(day_val.day)}</div>", unsafe_allow_html=True)
                     continue
                 is_off = day_val in leave_set
                 if wcols[i].button(
-                    str(day_val.day),
+                    ordinal_day(day_val.day),
                     key=f"leave_day_{selected_member}_{day_val.isoformat()}",
                     use_container_width=True,
                     type="primary" if is_off else "secondary",
