@@ -2,6 +2,9 @@ import streamlit as st
 import requests
 from bisect import bisect_right
 
+PRIMARY_DATASET_ID = "main"
+SECONDARY_DATASET_ID = "scott"
+
 def require_login():
     st.set_page_config(page_title="Hydraulic Resourcing App", layout="wide")
 
@@ -9,6 +12,8 @@ def require_login():
         st.session_state["authenticated"] = False
 
     if st.session_state["authenticated"]:
+        if "state_dataset_id" not in st.session_state:
+            st.session_state["state_dataset_id"] = PRIMARY_DATASET_ID
         return
 
     st.markdown(
@@ -93,9 +98,17 @@ def require_login():
             sign_in = st.button("Sign in", use_container_width=True)
 
     if sign_in:
-        expected = st.secrets.get("APP_PASSWORD", "")
-        if expected and pwd == expected:
+        primary_pwd = st.secrets.get("APP_PASSWORD", "")
+        secondary_pwd = st.secrets.get("APP_PASSWORD_SCOTT", "scott")
+        if primary_pwd and pwd == primary_pwd:
             st.session_state["authenticated"] = True
+            st.session_state["state_dataset_id"] = PRIMARY_DATASET_ID
+            st.session_state["login_profile"] = "primary"
+            st.rerun()
+        elif secondary_pwd and pwd == secondary_pwd:
+            st.session_state["authenticated"] = True
+            st.session_state["state_dataset_id"] = SECONDARY_DATASET_ID
+            st.session_state["login_profile"] = "secondary"
             st.rerun()
         else:
             st.error("Incorrect password")
@@ -515,7 +528,7 @@ INT_TO_LABEL = {v: k for k, v in WEEKDAY_MAP}
 
 JOB_COLS = ["Job name", "Required hours", "Priority", "Assignee", "Due date", "Notes"]
 SUPABASE_STATE_TABLE = "app_state"
-SUPABASE_STATE_ID = "main"
+SUPABASE_DEFAULT_STATE_ID = PRIMARY_DATASET_ID
 
 DEFAULT_TEAM_ROWS = [
     {"Member": "SL", "Daily hours": 8.0},
@@ -542,6 +555,10 @@ def get_supabase_config() -> tuple[str, str, bool]:
     url = st.secrets.get("SUPABASE_URL", "").strip().rstrip("/")
     key = st.secrets.get("SUPABASE_ANON_KEY", "").strip()
     return url, key, bool(url and key)
+
+def get_active_state_id() -> str:
+    state_id = str(st.session_state.get("state_dataset_id", SUPABASE_DEFAULT_STATE_ID)).strip()
+    return state_id if state_id else SUPABASE_DEFAULT_STATE_ID
 
 def _safe_date(value) -> date | None:
     dt = pd.to_datetime(value, errors="coerce")
@@ -664,20 +681,21 @@ def fetch_state_from_cloud() -> tuple[dict | None, str]:
     url, key, ready = get_supabase_config()
     if not ready:
         return None, "SUPABASE_URL or SUPABASE_ANON_KEY is missing in Streamlit secrets."
+    state_id = get_active_state_id()
     endpoint = f"{url}/rest/v1/{SUPABASE_STATE_TABLE}"
     headers = {"apikey": key, "Authorization": f"Bearer {key}"}
-    params = {"select": "payload", "id": f"eq.{SUPABASE_STATE_ID}", "limit": "1"}
+    params = {"select": "payload", "id": f"eq.{state_id}", "limit": "1"}
     try:
         resp = requests.get(endpoint, headers=headers, params=params, timeout=12)
         if resp.status_code >= 400:
             return None, f"Cloud load failed ({resp.status_code}): {resp.text[:180]}"
         rows = resp.json()
         if not rows:
-            return None, "No cloud snapshot found yet."
+            return None, f"No cloud snapshot found yet (dataset: {state_id})."
         payload = rows[0].get("payload")
         if not isinstance(payload, dict):
             return None, "Cloud payload is invalid."
-        return payload, "Cloud snapshot loaded."
+        return payload, f"Cloud snapshot loaded (dataset: {state_id})."
     except Exception as exc:
         return None, f"Cloud load failed: {exc}"
 
@@ -685,6 +703,7 @@ def save_state_to_cloud() -> tuple[bool, str]:
     url, key, ready = get_supabase_config()
     if not ready:
         return False, "SUPABASE_URL or SUPABASE_ANON_KEY is missing in Streamlit secrets."
+    state_id = get_active_state_id()
     endpoint = f"{url}/rest/v1/{SUPABASE_STATE_TABLE}"
     headers = {
         "apikey": key,
@@ -692,12 +711,12 @@ def save_state_to_cloud() -> tuple[bool, str]:
         "Content-Type": "application/json",
         "Prefer": "resolution=merge-duplicates,return=representation",
     }
-    body = [{"id": SUPABASE_STATE_ID, "payload": serialize_state_payload()}]
+    body = [{"id": state_id, "payload": serialize_state_payload()}]
     try:
         resp = requests.post(endpoint, headers=headers, json=body, timeout=12)
         if resp.status_code >= 400:
             return False, f"Cloud save failed ({resp.status_code}): {resp.text[:180]}"
-        return True, "Saved to cloud."
+        return True, f"Saved to cloud (dataset: {state_id})."
     except Exception as exc:
         return False, f"Cloud save failed: {exc}"
 
@@ -843,20 +862,6 @@ def add_months(d: date, months: int) -> date:
 def month_end(d: date) -> date:
     return add_months(month_start(d), 1) - timedelta(days=1)
 
-def month_grid_days(anchor_month: date) -> list[list[date | None]]:
-    first = month_start(anchor_month)
-    last = month_end(anchor_month)
-    leading = first.weekday()  # Mon=0
-    days: list[date | None] = [None] * leading
-    d = first
-    while d <= last:
-        days.append(d)
-        d = d + timedelta(days=1)
-    trailing = (7 - (len(days) % 7)) % 7
-    if trailing:
-        days.extend([None] * trailing)
-    return [days[i:i+7] for i in range(0, len(days), 7)]
-
 def due_cutoff_hours(due_date: date, working_dates: list[date], daily_hours: float) -> float:
     # Capacity available up to and including due_date, based on member calendar.
     idx = bisect_right(working_dates, due_date)
@@ -898,8 +903,9 @@ def clean_jobs_df(df: pd.DataFrame) -> pd.DataFrame:
     return df.reset_index(drop=True)
 
 init_local_state_if_missing()
-if "cloud_load_attempted" not in st.session_state:
-    st.session_state["cloud_load_attempted"] = True
+cloud_load_key = f"cloud_load_attempted_{get_active_state_id()}"
+if cloud_load_key not in st.session_state:
+    st.session_state[cloud_load_key] = True
     payload, msg = fetch_state_from_cloud()
     st.session_state["cloud_sync_message"] = msg
     if payload is not None:
@@ -1430,36 +1436,27 @@ with tabs[1]:
             if pd.notna(parsed):
                 leave_set.add(parsed.date())
 
-        headers = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
-        hcols = st.columns(7, gap="small")
-        for i, h in enumerate(headers):
-            hcols[i].markdown(f"<div class='mini'><b>{h}</b></div>", unsafe_allow_html=True)
+        render_leave_month_preview(st.session_state[leave_month_key], leave_set)
 
-        for week in month_grid_days(st.session_state[leave_month_key]):
-            wcols = st.columns(7, gap="small")
-            for i, day_val in enumerate(week):
-                if day_val is None:
-                    wcols[i].markdown("&nbsp;", unsafe_allow_html=True)
-                    continue
-                day_label = f"{day_val.day:02d}"
-                if day_val < date.today():
-                    wcols[i].markdown(f"<div class='leave-day leave-day-past'>{day_label}</div>", unsafe_allow_html=True)
-                    continue
-                is_off = day_val in leave_set
-                if wcols[i].button(
-                    day_label,
-                    key=f"leave_day_{selected_member}_{day_val.isoformat()}",
-                    use_container_width=True,
-                    type="primary" if is_off else "secondary",
-                ):
-                    if is_off:
-                        leave_set.remove(day_val)
-                    else:
-                        leave_set.add(day_val)
-                    st.session_state["member_settings"][selected_member]["leave_dates"] = sorted(list(leave_set))
-                    st.rerun()
+        pick_key = f"leave_pick_{selected_member}"
+        if pick_key not in st.session_state:
+            st.session_state[pick_key] = date.today()
+        picked = st.date_input("Select day to update", value=st.session_state[pick_key], key=pick_key)
+        picked_date = pd.to_datetime(picked, errors="coerce").date()
+        act1, act2 = st.columns(2, gap="small")
+        with act1:
+            if st.button("Mark non-working", key=f"leave_mark_off_{selected_member}", use_container_width=True):
+                leave_set.add(picked_date)
+                st.session_state["member_settings"][selected_member]["leave_dates"] = sorted(list(leave_set))
+                st.rerun()
+        with act2:
+            if st.button("Mark working", key=f"leave_mark_on_{selected_member}", use_container_width=True):
+                if picked_date in leave_set:
+                    leave_set.remove(picked_date)
+                st.session_state["member_settings"][selected_member]["leave_dates"] = sorted(list(leave_set))
+                st.rerun()
 
-        st.caption("Click a day to toggle non-working.")
+        st.caption("Use the month view for planning and toggle selected dates with the buttons.")
         st.markdown('</div>', unsafe_allow_html=True)
         st.markdown('</div>', unsafe_allow_html=True)
 
