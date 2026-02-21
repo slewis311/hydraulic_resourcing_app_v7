@@ -991,6 +991,12 @@ with st.sidebar:
             st.info(msg)
     if "cloud_sync_message" in st.session_state:
         st.caption(f"Status: {st.session_state['cloud_sync_message']}")
+    if st.button("Refresh outputs", key="refresh_outputs_btn_sidebar", use_container_width=True):
+        st.session_state.pop("jobs_editor", None)
+        staff_keys = [k for k in list(st.session_state.keys()) if str(k).startswith("member_jobs_editor_")]
+        for k in staff_keys:
+            st.session_state.pop(k, None)
+        st.rerun()
 
 team_members = team_df["Member"].astype(str).tolist() if not team_df.empty else []
 member_hours = {row["Member"]: float(row["Daily hours"]) for _, row in team_df.iterrows()} if not team_df.empty else {}
@@ -1054,12 +1060,6 @@ with tabs[0]:
 
     st.divider()
     st.subheader("Schedule output")
-    if st.button("Refresh outputs", key="refresh_outputs_btn"):
-        st.session_state.pop("jobs_editor", None)
-        staff_keys = [k for k in list(st.session_state.keys()) if str(k).startswith("member_jobs_editor_")]
-        for k in staff_keys:
-            st.session_state.pop(k, None)
-        st.rerun()
 
     scheduled_all = []
     hold_rows = []
