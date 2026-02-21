@@ -1061,6 +1061,9 @@ def render_leave_month_preview(anchor_month: date, leave_dates: set[date]):
             if not in_month:
                 html += "<td style='background: rgba(49,51,63,0.02);'></td>"
                 continue
+            if d.weekday() >= 5:
+                html += f"<td style='background: rgba(49,51,63,0.03);'><div class='cal-date'>{ordinal_day(d.day)}</div><span class='pill pill-red'>Non working</span></td>"
+                continue
             if d < date.today():
                 html += f"<td style='background: rgba(49,51,63,0.03);'><div class='cal-date'>{ordinal_day(d.day)}</div><div class='mini'>Past day</div></td>"
                 continue
@@ -1434,7 +1437,9 @@ with tabs[1]:
         for d in st.session_state["member_settings"][selected_member]["leave_dates"]:
             parsed = pd.to_datetime(d, errors="coerce")
             if pd.notna(parsed):
-                leave_set.add(parsed.date())
+                dd = parsed.date()
+                if dd.weekday() < 5:
+                    leave_set.add(dd)
 
         render_leave_month_preview(st.session_state[leave_month_key], leave_set)
 
@@ -1446,15 +1451,21 @@ with tabs[1]:
         act1, act2 = st.columns(2, gap="small")
         with act1:
             if st.button("Mark non-working", key=f"leave_mark_off_{selected_member}", use_container_width=True):
-                leave_set.add(picked_date)
-                st.session_state["member_settings"][selected_member]["leave_dates"] = sorted(list(leave_set))
-                st.rerun()
+                if picked_date.weekday() >= 5:
+                    st.info("Weekends are automatically non-working.")
+                else:
+                    leave_set.add(picked_date)
+                    st.session_state["member_settings"][selected_member]["leave_dates"] = sorted(list(leave_set))
+                    st.rerun()
         with act2:
             if st.button("Mark working", key=f"leave_mark_on_{selected_member}", use_container_width=True):
-                if picked_date in leave_set:
-                    leave_set.remove(picked_date)
-                st.session_state["member_settings"][selected_member]["leave_dates"] = sorted(list(leave_set))
-                st.rerun()
+                if picked_date.weekday() >= 5:
+                    st.info("Weekend days are fixed as non-working.")
+                else:
+                    if picked_date in leave_set:
+                        leave_set.remove(picked_date)
+                    st.session_state["member_settings"][selected_member]["leave_dates"] = sorted(list(leave_set))
+                    st.rerun()
 
         st.caption("Use the month view for planning and toggle selected dates with the buttons.")
         st.markdown('</div>', unsafe_allow_html=True)
