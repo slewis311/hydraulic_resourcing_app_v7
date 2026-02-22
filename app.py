@@ -1,7 +1,11 @@
 import streamlit as st
 import requests
 from bisect import bisect_right
+import base64
+import hashlib
+import secrets as pysecrets
 from zoneinfo import ZoneInfo
+from urllib.parse import urlencode
 
 PRIMARY_DATASET_ID = "main"
 SECONDARY_DATASET_ID = "scott"
@@ -644,23 +648,27 @@ def get_microsoft_calendar_config() -> dict:
     tenant_raw = st.secrets.get("MS_TENANT_ID", "common")
     client_id_raw = st.secrets.get("MS_CLIENT_ID", "")
     client_secret_raw = st.secrets.get("MS_CLIENT_SECRET", "")
+    redirect_uri_raw = st.secrets.get("MS_REDIRECT_URI", "")
     scopes_raw = st.secrets.get("MS_SCOPES", MS_DEFAULT_SCOPES)
 
     tenant_id = str(tenant_raw).strip() if tenant_raw is not None else "common"
     tenant_id = tenant_id or "common"
     client_id = str(client_id_raw).strip() if client_id_raw is not None else ""
     client_secret = str(client_secret_raw).strip() if client_secret_raw is not None else ""
+    redirect_uri = str(redirect_uri_raw).strip() if redirect_uri_raw is not None else ""
     scopes = _normalize_scope_list(scopes_raw)
 
     return {
         "tenant_id": tenant_id,
         "client_id": client_id,
         "client_secret": client_secret,
+        "redirect_uri": redirect_uri,
         "scopes": scopes,
         "scope_text": " ".join(scopes),
+        "authorize_url": f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/authorize",
         "device_code_url": f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/devicecode",
         "token_url": f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token",
-        "ready": bool(client_id),
+        "ready": bool(client_id and redirect_uri),
     }
 
 def _default_calendar_sync_state() -> dict:
@@ -681,6 +689,9 @@ def _default_calendar_sync_state() -> dict:
         "last_snapshot_member": "",
         "last_snapshot_event_count": 0,
         "last_snapshot_hours": 0.0,
+        "oauth_state": "",
+        "oauth_code_verifier": "",
+        "oauth_created_at": "",
     }
 
 def ensure_calendar_sync_state() -> None:
@@ -969,50 +980,66 @@ def _calendar_state_clean_for_save(sync: dict) -> dict:
     clean["last_snapshot_member"] = str(sync.get("last_snapshot_member", ""))
     clean["last_snapshot_event_count"] = _safe_int(sync.get("last_snapshot_event_count", 0) or 0, 0)
     clean["last_snapshot_hours"] = _safe_float(sync.get("last_snapshot_hours", 0.0) or 0.0, 0.0)
+    clean["oauth_state"] = str(sync.get("oauth_state", ""))
+    clean["oauth_code_verifier"] = str(sync.get("oauth_code_verifier", ""))
+    clean["oauth_created_at"] = "" if _safe_datetime(sync.get("oauth_created_at")) is None else _safe_datetime(sync.get("oauth_created_at")).isoformat()
     return clean
 
-def start_microsoft_calendar_link() -> tuple[bool, str]:
+def _code_challenge_s256(verifier: str) -> str:
+    digest = hashlib.sha256(verifier.encode("ascii")).digest()
+    return base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
+
+def build_microsoft_authorize_url() -> tuple[str | None, str]:
     cfg = get_microsoft_calendar_config()
     if not cfg["ready"]:
-        return False, "Set MS_CLIENT_ID in Streamlit secrets to enable Microsoft calendar link."
-    body = {"client_id": cfg["client_id"], "scope": cfg["scope_text"]}
-    try:
-        resp = requests.post(cfg["device_code_url"], data=body, timeout=15)
-        data = resp.json()
-    except Exception as exc:
-        return False, f"Calendar link start failed: {exc}"
-    if resp.status_code >= 400:
-        err = str(data.get("error_description", data))[:220]
-        return False, f"Calendar link start failed ({resp.status_code}): {err}"
-
+        if str(st.secrets.get("MS_CLIENT_ID", "")).strip():
+            return None, "Set MS_REDIRECT_URI in Streamlit secrets to enable redirect login."
+        return None, "Set MS_CLIENT_ID and MS_REDIRECT_URI in Streamlit secrets to enable redirect login."
     ensure_calendar_sync_state()
     sync = st.session_state["calendar_sync"]
     sync["provider"] = "microsoft"
     sync["tenant_id"] = cfg["tenant_id"]
     sync["client_id"] = cfg["client_id"]
-    sync["device_code"] = str(data.get("device_code", ""))
-    sync["verification_uri"] = str(data.get("verification_uri", ""))
-    sync["user_code"] = str(data.get("user_code", ""))
-    sync["device_interval"] = _safe_int(data.get("interval", 5) or 5, 5)
-    sync["device_expires_at"] = (_utc_now() + timedelta(seconds=_safe_int(data.get("expires_in", 900) or 900, 900))).isoformat()
+    now = _utc_now()
+    created = _safe_datetime(sync.get("oauth_created_at"))
+    state_is_fresh = created is not None and created > now - timedelta(minutes=20)
+    if not state_is_fresh or not str(sync.get("oauth_state", "")).strip():
+        sync["oauth_state"] = pysecrets.token_urlsafe(24)
+        sync["oauth_code_verifier"] = pysecrets.token_urlsafe(72)
+        sync["oauth_created_at"] = now.isoformat()
+    use_pkce = len(cfg["client_secret"]) == 0
+    params = {
+        "client_id": cfg["client_id"],
+        "response_type": "code",
+        "redirect_uri": cfg["redirect_uri"],
+        "response_mode": "query",
+        "scope": cfg["scope_text"],
+        "state": str(sync.get("oauth_state", "")),
+    }
+    if use_pkce:
+        verifier = str(sync.get("oauth_code_verifier", ""))
+        if len(verifier) == 0:
+            verifier = pysecrets.token_urlsafe(72)
+            sync["oauth_code_verifier"] = verifier
+            sync["oauth_created_at"] = now.isoformat()
+        params["code_challenge"] = _code_challenge_s256(verifier)
+        params["code_challenge_method"] = "S256"
+
     st.session_state["calendar_sync"] = sync
+    auth_url = f"{cfg['authorize_url']}?{urlencode(params)}"
+    return auth_url, "Open Microsoft login to link calendar."
 
-    if len(sync["device_code"]) == 0:
-        return False, "Calendar link start failed: missing device code response."
-    return True, f"Open {sync['verification_uri']} and enter code {sync['user_code']} to link Microsoft calendar."
-
-def _store_graph_tokens(token_data: dict) -> None:
+def _store_graph_tokens(token_data: dict, clear_oauth: bool = True) -> None:
     ensure_calendar_sync_state()
     sync = st.session_state["calendar_sync"]
     sync["access_token"] = str(token_data.get("access_token", ""))
     sync["refresh_token"] = str(token_data.get("refresh_token", sync.get("refresh_token", "")))
     expires_in = _safe_int(token_data.get("expires_in", 3600) or 3600, 3600)
     sync["access_token_expires_at"] = (_utc_now() + timedelta(seconds=expires_in)).isoformat()
-    # Device code flow has completed; clear pending prompt details.
-    sync["device_code"] = ""
-    sync["device_expires_at"] = ""
-    sync["verification_uri"] = ""
-    sync["user_code"] = ""
+    if clear_oauth:
+        sync["oauth_state"] = ""
+        sync["oauth_code_verifier"] = ""
+        sync["oauth_created_at"] = ""
     st.session_state["calendar_sync"] = sync
 
 def _fetch_graph_identity(access_token: str) -> str:
@@ -1033,10 +1060,94 @@ def _fetch_graph_identity(access_token: str) -> str:
     upn = str(data.get("userPrincipalName", "")).strip()
     return mail or upn
 
+def _query_param_str(key: str) -> str:
+    try:
+        value = st.query_params.get(key, "")
+    except Exception:
+        return ""
+    if isinstance(value, list):
+        if len(value) == 0:
+            return ""
+        return str(value[0]).strip()
+    return str(value).strip()
+
+def _clear_oauth_query_params() -> None:
+    for k in ["code", "state", "error", "error_description", "session_state"]:
+        if k in st.query_params:
+            del st.query_params[k]
+
+def process_microsoft_oauth_callback_if_present() -> None:
+    code = _query_param_str("code")
+    err = _query_param_str("error")
+    if len(code) == 0 and len(err) == 0:
+        return
+
+    if err:
+        desc = _query_param_str("error_description")
+        msg = f"Calendar link failed: {err}" if not desc else f"Calendar link failed: {desc}"
+        st.session_state["calendar_sync_message"] = msg
+        _clear_oauth_query_params()
+        return
+
+    cfg = get_microsoft_calendar_config()
+    if not cfg["ready"]:
+        st.session_state["calendar_sync_message"] = "Set MS_CLIENT_ID and MS_REDIRECT_URI in Streamlit secrets before linking."
+        _clear_oauth_query_params()
+        return
+
+    ensure_calendar_sync_state()
+    sync = st.session_state["calendar_sync"]
+    returned_state = _query_param_str("state")
+    expected_state = str(sync.get("oauth_state", "")).strip()
+    if expected_state and returned_state and returned_state != expected_state:
+        st.session_state["calendar_sync_message"] = "Calendar link failed: state mismatch. Click Link calander and try again."
+        _clear_oauth_query_params()
+        return
+
+    token_body = {
+        "client_id": cfg["client_id"],
+        "grant_type": "authorization_code",
+        "code": code,
+        "redirect_uri": cfg["redirect_uri"],
+        "scope": cfg["scope_text"],
+    }
+    if len(cfg["client_secret"]) > 0:
+        token_body["client_secret"] = cfg["client_secret"]
+    else:
+        verifier = str(sync.get("oauth_code_verifier", "")).strip()
+        if len(verifier) == 0:
+            st.session_state["calendar_sync_message"] = "Calendar link failed: missing PKCE verifier. Click Link calander and try again."
+            _clear_oauth_query_params()
+            return
+        token_body["code_verifier"] = verifier
+
+    try:
+        token_resp = requests.post(cfg["token_url"], data=token_body, timeout=15)
+        token_data = token_resp.json()
+    except Exception as exc:
+        st.session_state["calendar_sync_message"] = f"Calendar link failed: {exc}"
+        _clear_oauth_query_params()
+        return
+
+    if token_resp.status_code >= 400 or not str(token_data.get("access_token", "")).strip():
+        err_desc = str(token_data.get("error_description", token_data))[:220]
+        st.session_state["calendar_sync_message"] = f"Calendar link failed ({token_resp.status_code}): {err_desc}"
+        _clear_oauth_query_params()
+        return
+
+    _store_graph_tokens(token_data, clear_oauth=True)
+    sync2 = st.session_state["calendar_sync"]
+    identity = _fetch_graph_identity(sync2.get("access_token", ""))
+    if identity:
+        sync2["linked_email"] = identity
+        st.session_state["calendar_sync"] = sync2
+    st.session_state["calendar_sync_message"] = "Microsoft calendar linked."
+    _clear_oauth_query_params()
+
 def get_microsoft_access_token() -> tuple[str | None, str]:
     cfg = get_microsoft_calendar_config()
     if not cfg["ready"]:
-        return None, "Set MS_CLIENT_ID in Streamlit secrets to enable Microsoft calendar sync."
+        return None, "Set MS_CLIENT_ID and MS_REDIRECT_URI in Streamlit secrets to enable Microsoft calendar sync."
 
     ensure_calendar_sync_state()
     sync = st.session_state["calendar_sync"]
@@ -1066,7 +1177,7 @@ def get_microsoft_access_token() -> tuple[str | None, str]:
         except Exception as exc:
             return None, f"Calendar token refresh failed: {exc}"
         if refresh_resp.status_code < 400 and str(refresh_data.get("access_token", "")).strip():
-            _store_graph_tokens(refresh_data)
+            _store_graph_tokens(refresh_data, clear_oauth=False)
             fresh_sync = st.session_state["calendar_sync"]
             identity = _fetch_graph_identity(fresh_sync.get("access_token", ""))
             if identity:
@@ -1074,45 +1185,7 @@ def get_microsoft_access_token() -> tuple[str | None, str]:
                 st.session_state["calendar_sync"] = fresh_sync
             return fresh_sync.get("access_token", ""), "Microsoft calendar linked."
 
-    device_code = str(sync.get("device_code", ""))
-    device_exp = _safe_datetime(sync.get("device_expires_at"))
-    if device_code and device_exp is not None and device_exp > now:
-        poll_body = {
-            "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
-            "client_id": cfg["client_id"],
-            "device_code": device_code,
-        }
-        if len(cfg["client_secret"]) > 0:
-            poll_body["client_secret"] = cfg["client_secret"]
-        try:
-            poll_resp = requests.post(cfg["token_url"], data=poll_body, timeout=15)
-            poll_data = poll_resp.json()
-        except Exception as exc:
-            return None, f"Calendar authorization poll failed: {exc}"
-
-        if poll_resp.status_code < 400 and str(poll_data.get("access_token", "")).strip():
-            _store_graph_tokens(poll_data)
-            fresh_sync = st.session_state["calendar_sync"]
-            identity = _fetch_graph_identity(fresh_sync.get("access_token", ""))
-            if identity:
-                fresh_sync["linked_email"] = identity
-                st.session_state["calendar_sync"] = fresh_sync
-            return fresh_sync.get("access_token", ""), "Microsoft calendar linked."
-
-        err_code = str(poll_data.get("error", "")).strip().lower()
-        if err_code in {"authorization_pending", "slow_down"}:
-            return None, f"Finish linking in browser: {sync.get('verification_uri', '')} (code {sync.get('user_code', '')})."
-        if err_code in {"expired_token", "authorization_declined", "bad_verification_code"}:
-            sync["device_code"] = ""
-            sync["device_expires_at"] = ""
-            sync["verification_uri"] = ""
-            sync["user_code"] = ""
-            st.session_state["calendar_sync"] = sync
-            return None, "Calendar linking session expired. Click Link calander to start again."
-        err_desc = str(poll_data.get("error_description", poll_data))[:220]
-        return None, f"Calendar authorization failed: {err_desc}"
-
-    return None, "Calendar not linked yet. Click Link calander and complete Microsoft sign-in."
+    return None, "Calendar not linked yet. Click Link calander and sign in with Microsoft."
 
 def fetch_microsoft_calendar_events(access_token: str, start_dt: datetime, end_dt: datetime) -> tuple[list[dict] | None, str]:
     start_iso = start_dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
@@ -1528,6 +1601,8 @@ if cloud_load_key not in st.session_state:
     if payload is not None:
         apply_state_payload(payload)
 
+process_microsoft_oauth_callback_if_present()
+
 def add_status_columns(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     df["Status"] = df["Priority"].apply(lambda p: "Active" if int(p) >= 1 else "On hold")
@@ -1742,17 +1817,24 @@ with st.sidebar:
     st.divider()
     st.subheader("Calander sync")
     sidebar_members = team_df["Member"].astype(str).tolist() if not team_df.empty else []
-    sync_member = resolve_calendar_target_member(sidebar_members)
-    if sync_member is not None:
-        st.caption(f"Sync member: {sync_member}")
+    sync_member = None
+    if len(sidebar_members) > 0:
+        default_sync_member = resolve_calendar_target_member(sidebar_members)
+        default_idx = sidebar_members.index(default_sync_member) if default_sync_member in sidebar_members else 0
+        sync_member = st.selectbox(
+            "Snapshot member",
+            options=sidebar_members,
+            index=default_idx,
+            key="calendar_sync_member_sidebar",
+        )
 
-    if st.button("Link calander", key="link_calander_btn_sidebar", use_container_width=True):
-        ok, msg = start_microsoft_calendar_link()
-        st.session_state["calendar_sync_message"] = msg
-        if ok:
-            st.success(msg)
-        else:
-            st.error(msg)
+    auth_url, auth_msg = build_microsoft_authorize_url()
+    if auth_url:
+        st.link_button("Link calander", auth_url, use_container_width=True)
+    else:
+        st.button("Link calander", key="link_calander_btn_sidebar_disabled", use_container_width=True, disabled=True)
+        st.caption(auth_msg)
+
     if st.button("Refresh calander snapshot", key="refresh_calander_snapshot_btn_sidebar", use_container_width=True):
         ok, msg = refresh_microsoft_calendar_snapshot(sync_member)
         st.session_state["calendar_sync_message"] = msg
@@ -1764,11 +1846,6 @@ with st.sidebar:
 
     ensure_calendar_sync_state()
     sync_state = st.session_state.get("calendar_sync", {})
-    pending_code = str(sync_state.get("user_code", "")).strip()
-    pending_url = str(sync_state.get("verification_uri", "")).strip()
-    pending_exp = _safe_datetime(sync_state.get("device_expires_at"))
-    if pending_code and pending_url and pending_exp is not None and pending_exp > _utc_now():
-        st.caption(f"To link: open {pending_url} and enter code {pending_code}")
     linked_email = str(sync_state.get("linked_email", "")).strip()
     if linked_email:
         st.caption(f"Linked: {linked_email}")
