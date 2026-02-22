@@ -820,6 +820,18 @@ def normalize_active_priorities(jobs: pd.DataFrame) -> pd.DataFrame:
 
     return pd.concat([active, hold], ignore_index=True)
 
+def _capacity_segments(capacity_days: list[tuple[date, float]]) -> tuple[list[tuple[int, date, float, float]], float]:
+    segments: list[tuple[int, date, float, float]] = []
+    running = 0.0
+    for day_idx, (d, cap) in enumerate(capacity_days):
+        cap_val = float(cap)
+        if cap_val <= 1e-9:
+            continue
+        seg_start = running
+        running = running + cap_val
+        segments.append((day_idx, d, seg_start, running))
+    return segments, running
+
 def schedule_member_jobs(
     df_member_active: pd.DataFrame,
     start_date: date,
@@ -841,11 +853,10 @@ def schedule_member_jobs(
     )
     if len(capacity_days) == 0:
         raise ValueError("No working days available for this member calendar")
-    prefix = [0.0]
-    for _, cap in capacity_days:
-        prefix.append(prefix[-1] + float(cap))
-    if prefix[-1] <= 1e-9:
+    segments, total_capacity = _capacity_segments(capacity_days)
+    if total_capacity <= 1e-9 or len(segments) == 0:
         raise ValueError("No project capacity available for this member calendar")
+    seg_ends = [seg_end for _, _, _, seg_end in segments]
 
     start_hour_index = []
     finish_hour_index = []
@@ -861,28 +872,12 @@ def schedule_member_jobs(
     def hour_index_to_date(h: float) -> date:
         if h < 0:
             h = 0.0
-        if h >= prefix[-1]:
-            for d, cap in reversed(capacity_days):
-                if cap > 1e-9:
-                    return d
-            return capacity_days[-1][0]
-        day_index = bisect_right(prefix, h) - 1
-        if day_index < 0:
-            day_index = 0
-        if day_index >= len(capacity_days):
-            day_index = len(capacity_days) - 1
-        if capacity_days[day_index][1] <= 1e-9:
-            fwd = day_index + 1
-            while fwd < len(capacity_days) and capacity_days[fwd][1] <= 1e-9:
-                fwd += 1
-            if fwd < len(capacity_days):
-                return capacity_days[fwd][0]
-            back = day_index
-            while back >= 0 and capacity_days[back][1] <= 1e-9:
-                back -= 1
-            if back >= 0:
-                return capacity_days[back][0]
-        return capacity_days[day_index][0]
+        if h >= total_capacity:
+            return segments[-1][1]
+        seg_pos = bisect_right(seg_ends, h)
+        if seg_pos >= len(segments):
+            seg_pos = len(segments) - 1
+        return segments[seg_pos][1]
 
     def finish_hour_to_date(h: float) -> date:
         eps = 1e-9
@@ -917,29 +912,38 @@ def allocate_member_hours(
         return alloc
     capacity_vals = [float(c) for _, c in capacity_days]
     alloc["Allocated hours"] = 0.0
-
-    prefix = [0.0]
-    for cap in capacity_vals:
-        prefix.append(prefix[-1] + cap)
+    segments, total_capacity = _capacity_segments(capacity_days)
+    seg_ends = [seg_end for _, _, _, seg_end in segments]
 
     if schedule_df is None or schedule_df.empty:
         alloc["Free hours"] = capacity_vals
         return alloc
 
     for _, row in schedule_df.iterrows():
+        if len(segments) == 0:
+            break
         sh = float(row["Start hour index"])
         fh = float(row["Finish hour index"])
-        if fh <= 0:
+        if fh <= 0 or sh >= total_capacity:
             continue
-        start_day = max(0, bisect_right(prefix, sh) - 1)
-        end_day = min(len(capacity_days) - 1, max(0, bisect_right(prefix, max(fh - 1e-9, 0.0)) - 1))
-        for d in range(start_day, end_day + 1):
-            day_start_h = prefix[d]
-            day_end_h = prefix[d + 1]
-            if day_end_h - day_start_h <= 1e-9:
+        sh_clip = max(0.0, sh)
+        fh_clip = min(fh, total_capacity)
+        if fh_clip <= sh_clip:
+            continue
+
+        start_seg = bisect_right(seg_ends, sh_clip)
+        end_seg = bisect_right(seg_ends, max(fh_clip - 1e-9, 0.0))
+        if start_seg >= len(segments):
+            continue
+        if end_seg >= len(segments):
+            end_seg = len(segments) - 1
+
+        for seg_pos in range(start_seg, end_seg + 1):
+            day_idx, _, seg_start, seg_end = segments[seg_pos]
+            overlap = max(0.0, min(fh_clip, seg_end) - max(sh_clip, seg_start))
+            if overlap <= 0.0:
                 continue
-            overlap = max(0.0, min(fh, day_end_h) - max(sh, day_start_h))
-            alloc.loc[d, "Allocated hours"] = float(alloc.loc[d, "Allocated hours"]) + overlap
+            alloc.loc[day_idx, "Allocated hours"] = float(alloc.loc[day_idx, "Allocated hours"]) + overlap
 
     alloc["Free hours"] = (pd.Series(capacity_vals) - alloc["Allocated hours"]).clip(lower=0.0)
     return alloc
@@ -967,29 +971,34 @@ def build_day_job_details(
     if schedule_df is None or schedule_df.empty:
         return day_jobs
 
-    capacity_vals = [float(c) for _, c in capacity_days]
-    prefix = [0.0]
-    for cap in capacity_vals:
-        prefix.append(prefix[-1] + cap)
+    segments, total_capacity = _capacity_segments(capacity_days)
+    seg_ends = [seg_end for _, _, _, seg_end in segments]
 
     for _, row in schedule_df.iterrows():
+        if len(segments) == 0:
+            break
         sh = float(row["Start hour index"])
         fh = float(row["Finish hour index"])
-        if fh <= 0:
+        if fh <= 0 or sh >= total_capacity:
             continue
-        start_day = max(0, bisect_right(prefix, sh) - 1)
-        end_day = min(len(capacity_days) - 1, max(0, bisect_right(prefix, max(fh - 1e-9, 0.0)) - 1))
+        sh_clip = max(0.0, sh)
+        fh_clip = min(fh, total_capacity)
+        if fh_clip <= sh_clip:
+            continue
+        start_seg = bisect_right(seg_ends, sh_clip)
+        end_seg = bisect_right(seg_ends, max(fh_clip - 1e-9, 0.0))
+        if start_seg >= len(segments):
+            continue
+        if end_seg >= len(segments):
+            end_seg = len(segments) - 1
         job_name = str(row.get("Job name", "")).strip()
-        for d in range(start_day, end_day + 1):
-            day_start_h = prefix[d]
-            day_end_h = prefix[d + 1]
-            if day_end_h - day_start_h <= 1e-9:
-                continue
-            overlap = max(0.0, min(fh, day_end_h) - max(sh, day_start_h))
+        for seg_pos in range(start_seg, end_seg + 1):
+            _, seg_date, seg_start, seg_end = segments[seg_pos]
+            overlap = max(0.0, min(fh_clip, seg_end) - max(sh_clip, seg_start))
             if overlap <= 0:
                 continue
             name = job_name if job_name else "Unnamed job"
-            day_jobs[capacity_days[d][0]].append(f"{name} ({overlap:.1f}h)")
+            day_jobs[seg_date].append(f"{name} ({overlap:.1f}h)")
     return day_jobs
 
 def ordinal_day(n: int) -> str:
@@ -1282,6 +1291,11 @@ with st.sidebar:
         for k in staff_keys:
             st.session_state.pop(k, None)
         st.rerun()
+
+    st.divider()
+    st.subheader("Calander sync")
+    st.button("Link calander", key="link_calander_btn_sidebar", use_container_width=True)
+    st.button("Refresh calander snapshot", key="refresh_calander_snapshot_btn_sidebar", use_container_width=True)
 
 team_members = team_df["Member"].astype(str).tolist() if not team_df.empty else []
 member_hours = {row["Member"]: float(row["Daily hours"]) for _, row in team_df.iterrows()} if not team_df.empty else {}
