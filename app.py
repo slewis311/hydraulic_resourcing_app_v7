@@ -551,6 +551,41 @@ def build_working_dates(start_date: date, weekdays: set[int], non_working_dates:
         d = d + timedelta(days=1)
     return dates
 
+def normalize_unavailable_hours(unavailable_hours: dict | None, daily_hours: float) -> dict[date, float]:
+    out: dict[date, float] = {}
+    if unavailable_hours is None:
+        return out
+    for k, v in unavailable_hours.items():
+        kd = _safe_date(k)
+        if kd is None:
+            continue
+        try:
+            hv = float(v)
+        except Exception:
+            continue
+        if hv <= 0:
+            continue
+        out[kd] = min(hv, float(daily_hours))
+    return out
+
+def build_capacity_days(
+    start_date: date,
+    weekdays: set[int],
+    non_working_dates: set[date],
+    daily_hours: float,
+    unavailable_hours: dict | None = None,
+    horizon_days: int = 3650,
+) -> list[tuple[date, float]]:
+    unavail = normalize_unavailable_hours(unavailable_hours, daily_hours)
+    days: list[tuple[date, float]] = []
+    d = start_date
+    for _ in range(horizon_days):
+        if d.weekday() in weekdays and d not in non_working_dates:
+            cap = max(float(daily_hours) - float(unavail.get(d, 0.0)), 0.0)
+            days.append((d, cap))
+        d = d + timedelta(days=1)
+    return days
+
 def get_supabase_config() -> tuple[str, str, bool]:
     url = st.secrets.get("SUPABASE_URL", "").strip().rstrip("/")
     key = st.secrets.get("SUPABASE_ANON_KEY", "").strip()
@@ -785,13 +820,32 @@ def normalize_active_priorities(jobs: pd.DataFrame) -> pd.DataFrame:
 
     return pd.concat([active, hold], ignore_index=True)
 
-def schedule_member_jobs(df_member_active: pd.DataFrame, start_date: date, daily_hours: float, weekdays: set[int], non_working_dates: set[date]) -> pd.DataFrame:
+def schedule_member_jobs(
+    df_member_active: pd.DataFrame,
+    start_date: date,
+    daily_hours: float,
+    weekdays: set[int],
+    non_working_dates: set[date],
+    unavailable_hours: dict | None = None,
+) -> pd.DataFrame:
     df = df_member_active.copy()
     df = df.sort_values(["Priority", "Job name"], ascending=[True, True]).reset_index(drop=True)
 
-    working_dates = build_working_dates(start_date, weekdays, non_working_dates, horizon_days=3650)
-    if len(working_dates) == 0:
+    capacity_days = build_capacity_days(
+        start_date,
+        weekdays,
+        non_working_dates,
+        daily_hours,
+        unavailable_hours=unavailable_hours,
+        horizon_days=3650,
+    )
+    if len(capacity_days) == 0:
         raise ValueError("No working days available for this member calendar")
+    prefix = [0.0]
+    for _, cap in capacity_days:
+        prefix.append(prefix[-1] + float(cap))
+    if prefix[-1] <= 1e-9:
+        raise ValueError("No project capacity available for this member calendar")
 
     start_hour_index = []
     finish_hour_index = []
@@ -805,12 +859,30 @@ def schedule_member_jobs(df_member_active: pd.DataFrame, start_date: date, daily
     df["Finish hour index"] = finish_hour_index
 
     def hour_index_to_date(h: float) -> date:
-        day_index = int(h // daily_hours)
+        if h < 0:
+            h = 0.0
+        if h >= prefix[-1]:
+            for d, cap in reversed(capacity_days):
+                if cap > 1e-9:
+                    return d
+            return capacity_days[-1][0]
+        day_index = bisect_right(prefix, h) - 1
         if day_index < 0:
             day_index = 0
-        if day_index >= len(working_dates):
-            return working_dates[-1]
-        return working_dates[day_index]
+        if day_index >= len(capacity_days):
+            day_index = len(capacity_days) - 1
+        if capacity_days[day_index][1] <= 1e-9:
+            fwd = day_index + 1
+            while fwd < len(capacity_days) and capacity_days[fwd][1] <= 1e-9:
+                fwd += 1
+            if fwd < len(capacity_days):
+                return capacity_days[fwd][0]
+            back = day_index
+            while back >= 0 and capacity_days[back][1] <= 1e-9:
+                back -= 1
+            if back >= 0:
+                return capacity_days[back][0]
+        return capacity_days[day_index][0]
 
     def finish_hour_to_date(h: float) -> date:
         eps = 1e-9
@@ -820,56 +892,104 @@ def schedule_member_jobs(df_member_active: pd.DataFrame, start_date: date, daily
     df["Finish date"] = [finish_hour_to_date(h) for h in df["Finish hour index"]]
     return df
 
-def allocate_member_hours(schedule_df: pd.DataFrame, start_date: date, daily_hours: float, weekdays: set[int], non_working_dates: set[date], horizon_workdays: int = 20) -> pd.DataFrame:
-    working_dates = build_working_dates(start_date, weekdays, non_working_dates, horizon_days=3650)
-    working_dates = working_dates[:max(horizon_workdays, 1)]
-    alloc = pd.DataFrame({"Date": working_dates})
+def allocate_member_hours(
+    schedule_df: pd.DataFrame,
+    start_date: date,
+    daily_hours: float,
+    weekdays: set[int],
+    non_working_dates: set[date],
+    horizon_workdays: int = 20,
+    unavailable_hours: dict | None = None,
+) -> pd.DataFrame:
+    capacity_days = build_capacity_days(
+        start_date,
+        weekdays,
+        non_working_dates,
+        daily_hours,
+        unavailable_hours=unavailable_hours,
+        horizon_days=3650,
+    )
+    capacity_days = capacity_days[:max(horizon_workdays, 1)]
+    alloc = pd.DataFrame({"Date": [d for d, _ in capacity_days]})
+    if len(capacity_days) == 0:
+        alloc["Allocated hours"] = []
+        alloc["Free hours"] = []
+        return alloc
+    capacity_vals = [float(c) for _, c in capacity_days]
     alloc["Allocated hours"] = 0.0
 
+    prefix = [0.0]
+    for cap in capacity_vals:
+        prefix.append(prefix[-1] + cap)
+
     if schedule_df is None or schedule_df.empty:
-        alloc["Free hours"] = daily_hours
+        alloc["Free hours"] = capacity_vals
         return alloc
 
     for _, row in schedule_df.iterrows():
         sh = float(row["Start hour index"])
         fh = float(row["Finish hour index"])
-        start_day = int(sh // daily_hours)
-        end_day = int((fh - 1e-9) // daily_hours)
+        if fh <= 0:
+            continue
+        start_day = max(0, bisect_right(prefix, sh) - 1)
+        end_day = min(len(capacity_days) - 1, max(0, bisect_right(prefix, max(fh - 1e-9, 0.0)) - 1))
         for d in range(start_day, end_day + 1):
-            if d >= len(alloc):
-                break
-            day_start_h = d * daily_hours
-            day_end_h = (d + 1) * daily_hours
+            day_start_h = prefix[d]
+            day_end_h = prefix[d + 1]
+            if day_end_h - day_start_h <= 1e-9:
+                continue
             overlap = max(0.0, min(fh, day_end_h) - max(sh, day_start_h))
             alloc.loc[d, "Allocated hours"] = float(alloc.loc[d, "Allocated hours"]) + overlap
 
-    alloc["Free hours"] = (daily_hours - alloc["Allocated hours"]).clip(lower=0.0)
+    alloc["Free hours"] = (pd.Series(capacity_vals) - alloc["Allocated hours"]).clip(lower=0.0)
     return alloc
 
-def build_day_job_details(schedule_df: pd.DataFrame, start_date: date, daily_hours: float, weekdays: set[int], non_working_dates: set[date], horizon_workdays: int = 20) -> dict[date, list[str]]:
-    working_dates = build_working_dates(start_date, weekdays, non_working_dates, horizon_days=3650)
-    working_dates = working_dates[:max(horizon_workdays, 1)]
-    day_jobs = {d: [] for d in working_dates}
+def build_day_job_details(
+    schedule_df: pd.DataFrame,
+    start_date: date,
+    daily_hours: float,
+    weekdays: set[int],
+    non_working_dates: set[date],
+    horizon_workdays: int = 20,
+    unavailable_hours: dict | None = None,
+) -> dict[date, list[str]]:
+    capacity_days = build_capacity_days(
+        start_date,
+        weekdays,
+        non_working_dates,
+        daily_hours,
+        unavailable_hours=unavailable_hours,
+        horizon_days=3650,
+    )
+    capacity_days = capacity_days[:max(horizon_workdays, 1)]
+    day_jobs = {d: [] for d, _ in capacity_days}
 
     if schedule_df is None or schedule_df.empty:
         return day_jobs
 
+    capacity_vals = [float(c) for _, c in capacity_days]
+    prefix = [0.0]
+    for cap in capacity_vals:
+        prefix.append(prefix[-1] + cap)
+
     for _, row in schedule_df.iterrows():
         sh = float(row["Start hour index"])
         fh = float(row["Finish hour index"])
-        start_day = int(sh // daily_hours)
-        end_day = int((fh - 1e-9) // daily_hours)
+        if fh <= 0:
+            continue
+        start_day = max(0, bisect_right(prefix, sh) - 1)
+        end_day = min(len(capacity_days) - 1, max(0, bisect_right(prefix, max(fh - 1e-9, 0.0)) - 1))
         job_name = str(row.get("Job name", "")).strip()
         for d in range(start_day, end_day + 1):
-            if d >= len(working_dates):
-                break
-            day_start_h = d * daily_hours
-            day_end_h = (d + 1) * daily_hours
+            day_start_h = prefix[d]
+            day_end_h = prefix[d + 1]
+            if day_end_h - day_start_h <= 1e-9:
+                continue
             overlap = max(0.0, min(fh, day_end_h) - max(sh, day_start_h))
             if overlap <= 0:
                 continue
             name = job_name if job_name else "Unnamed job"
-            day_jobs[working_dates[d]].append(f"{name} ({overlap:.1f}h)")
+            day_jobs[capacity_days[d][0]].append(f"{name} ({overlap:.1f}h)")
     return day_jobs
 
 def ordinal_day(n: int) -> str:
@@ -891,10 +1011,14 @@ def add_months(d: date, months: int) -> date:
 def month_end(d: date) -> date:
     return add_months(month_start(d), 1) - timedelta(days=1)
 
-def due_cutoff_hours(due_date: date, working_dates: list[date], daily_hours: float) -> float:
+def due_cutoff_hours(due_date: date, capacity_days: list[tuple[date, float]]) -> float:
     # Capacity available up to and including due_date, based on member calendar.
-    idx = bisect_right(working_dates, due_date)
-    return float(idx) * float(daily_hours)
+    total = 0.0
+    for d, cap in capacity_days:
+        if d > due_date:
+            break
+        total += float(cap)
+    return total
 
 def ensure_member_settings(members: list[str]) -> None:
     if "member_settings" not in st.session_state:
@@ -1228,6 +1352,28 @@ with tabs[0]:
     member_active_sched = {}
 
     for member in team_members:
+        ms = st.session_state["member_settings"][member]
+        weekdays = ms["weekdays"]
+        non_working = set(ms["leave_dates"])
+        unavailable_hours = ms.get("unavailable_hours", {})
+        sdate = ms.get("start_date", date.today())
+        daily_hours = float(member_hours.get(member, 8.0))
+        member_working_cfg[member] = {
+            "capacity_days": build_capacity_days(
+                sdate,
+                weekdays,
+                non_working,
+                daily_hours,
+                unavailable_hours=unavailable_hours,
+                horizon_days=3650,
+            ),
+            "daily_hours": daily_hours,
+            "weekdays": weekdays,
+            "non_working": non_working,
+            "unavailable_hours": unavailable_hours,
+            "sdate": sdate,
+        }
+
         member_jobs = jobs_norm[jobs_norm["Assignee"] == member].copy()
         if member_jobs.empty:
             continue
@@ -1240,17 +1386,14 @@ with tabs[0]:
         if active.empty:
             continue
 
-        ms = st.session_state["member_settings"][member]
-        weekdays = ms["weekdays"]
-        non_working = set(ms["leave_dates"])
-        sdate = ms.get("start_date", date.today())
-        daily_hours = float(member_hours.get(member, 8.0))
-        member_working_cfg[member] = {
-            "working_dates": build_working_dates(sdate, weekdays, non_working, horizon_days=3650),
-            "daily_hours": daily_hours,
-        }
-
-        sched = schedule_member_jobs(active, sdate, daily_hours, weekdays, non_working)
+        sched = schedule_member_jobs(
+            active,
+            sdate,
+            daily_hours,
+            weekdays,
+            non_working,
+            unavailable_hours=unavailable_hours,
+        )
         sched["Assignee"] = member
         scheduled_all.append(sched)
         member_active_sched[member] = sched.copy()
@@ -1286,9 +1429,8 @@ with tabs[0]:
         if sched_member is None or sched_member.empty:
             continue
         cfg = member_working_cfg.get(member, {})
-        working_dates = cfg.get("working_dates", [])
-        daily_hours = float(cfg.get("daily_hours", 0.0))
-        if not working_dates or daily_hours <= 0:
+        capacity_days = cfg.get("capacity_days", [])
+        if not capacity_days:
             continue
 
         due_rows = sched_member.dropna(subset=["Due date"]).copy()
@@ -1298,7 +1440,7 @@ with tabs[0]:
         member_max_deficit = 0.0
         for _, row in due_rows.iterrows():
             due = row.get("Due date")
-            cutoff = due_cutoff_hours(due, working_dates, daily_hours)
+            cutoff = due_cutoff_hours(due, capacity_days)
             finish_h = float(row.get("Finish hour index", 0.0))
             deficit = max(0.0, finish_h - cutoff)
             if deficit > member_max_deficit:
@@ -1316,16 +1458,24 @@ with tabs[0]:
         helper_members = [m for m in team_members if m not in overtime_members]
         for member in helper_members:
             cfg = member_working_cfg.get(member, {})
-            weekdays = cfg.get("weekdays")
-            if weekdays is None:
-                weekdays = st.session_state["member_settings"][member]["weekdays"]
-            non_working = set(st.session_state["member_settings"][member]["leave_dates"])
-            sdate = st.session_state["member_settings"][member].get("start_date", date.today())
+            weekdays = cfg.get("weekdays", st.session_state["member_settings"][member]["weekdays"])
+            non_working = set(cfg.get("non_working", set(st.session_state["member_settings"][member]["leave_dates"])))
+            sdate = cfg.get("sdate", st.session_state["member_settings"][member].get("start_date", date.today()))
             daily_hours = float(cfg.get("daily_hours", member_hours.get(member, 8.0)))
+            unavailable_hours = cfg.get("unavailable_hours", st.session_state["member_settings"][member].get("unavailable_hours", {}))
             sched_member = member_active_sched.get(member, pd.DataFrame())
 
-            working_dates = build_working_dates(sdate, weekdays, non_working, horizon_days=3650)
-            horizon_workdays = len([d for d in working_dates if d <= cutoff_date])
+            capacity_days = cfg.get("capacity_days")
+            if capacity_days is None:
+                capacity_days = build_capacity_days(
+                    sdate,
+                    weekdays,
+                    non_working,
+                    daily_hours,
+                    unavailable_hours=unavailable_hours,
+                    horizon_days=3650,
+                )
+            horizon_workdays = len([d for d, _ in capacity_days if d <= cutoff_date])
             if horizon_workdays <= 0:
                 continue
 
@@ -1336,6 +1486,7 @@ with tabs[0]:
                 weekdays,
                 non_working,
                 horizon_workdays=horizon_workdays,
+                unavailable_hours=unavailable_hours,
             )
             alloc = alloc[(alloc["Date"] >= date.today()) & (alloc["Date"] <= cutoff_date)].copy()
             if not alloc.empty:
@@ -1601,6 +1752,7 @@ with tabs[1]:
         ms = st.session_state["member_settings"][selected_member]
         weekdays = ms["weekdays"]
         non_working = set(ms["leave_dates"])
+        unavailable_hours = ms.get("unavailable_hours", {})
         daily_hours = float(member_hours.get(selected_member, 8.0))
 
         jobs_norm = normalize_active_priorities(clean_jobs_df(combined_norm))
@@ -1614,7 +1766,14 @@ with tabs[1]:
 
         frames = []
         if not active.empty:
-            sched = schedule_member_jobs(active, ms.get("start_date", date.today()), daily_hours, weekdays, non_working)
+            sched = schedule_member_jobs(
+                active,
+                ms.get("start_date", date.today()),
+                daily_hours,
+                weekdays,
+                non_working,
+                unavailable_hours=unavailable_hours,
+            )
             sched = add_status_columns(sched)
             frames.append(sched)
         if not hold.empty:
@@ -1645,6 +1804,7 @@ with tabs[2]:
         ms = st.session_state["member_settings"][member]
         weekdays = ms["weekdays"]
         non_working = set(ms["leave_dates"])
+        unavailable_hours = ms.get("unavailable_hours", {})
         sdate = ms.get("start_date", date.today())
         daily_hours = float(member_hours.get(member, 8.0))
 
@@ -1658,10 +1818,25 @@ with tabs[2]:
             next_free_active = sdate
             sched_active = pd.DataFrame()
         else:
-            sched_active = schedule_member_jobs(active, sdate, daily_hours, weekdays, non_working)
+            sched_active = schedule_member_jobs(
+                active,
+                sdate,
+                daily_hours,
+                weekdays,
+                non_working,
+                unavailable_hours=unavailable_hours,
+            )
             last_finish = max(sched_active["Finish date"].tolist())
-            work_days = build_working_dates(last_finish + timedelta(days=1), weekdays, non_working, horizon_days=3650)
-            next_free_active = work_days[0] if len(work_days) else last_finish + timedelta(days=1)
+            future_caps = build_capacity_days(
+                last_finish + timedelta(days=1),
+                weekdays,
+                non_working,
+                daily_hours,
+                unavailable_hours=unavailable_hours,
+                horizon_days=3650,
+            )
+            future_days = [d for d, cap in future_caps if cap > 1e-9]
+            next_free_active = future_days[0] if len(future_days) else last_finish + timedelta(days=1)
 
         if active.empty and hold.empty:
             next_free_all = sdate
@@ -1680,10 +1855,25 @@ with tabs[2]:
                 combined["Priority"] = range(1, len(combined) + 1)
 
             combined = combined.sort_values(["Priority","Job name"], ascending=[True, True])
-            sched_all = schedule_member_jobs(combined, sdate, daily_hours, weekdays, non_working)
+            sched_all = schedule_member_jobs(
+                combined,
+                sdate,
+                daily_hours,
+                weekdays,
+                non_working,
+                unavailable_hours=unavailable_hours,
+            )
             last_finish_all = max(sched_all["Finish date"].tolist())
-            work_days_all = build_working_dates(last_finish_all + timedelta(days=1), weekdays, non_working, horizon_days=3650)
-            next_free_all = work_days_all[0] if len(work_days_all) else last_finish_all + timedelta(days=1)
+            future_caps_all = build_capacity_days(
+                last_finish_all + timedelta(days=1),
+                weekdays,
+                non_working,
+                daily_hours,
+                unavailable_hours=unavailable_hours,
+                horizon_days=3650,
+            )
+            future_days_all = [d for d, cap in future_caps_all if cap > 1e-9]
+            next_free_all = future_days_all[0] if len(future_days_all) else last_finish_all + timedelta(days=1)
 
         member_context[member] = {
             "sched_active": sched_active if isinstance(sched_active, pd.DataFrame) else pd.DataFrame(),
@@ -1692,6 +1882,7 @@ with tabs[2]:
             "weekdays": weekdays,
             "non_working": non_working,
             "daily_hours": daily_hours,
+            "unavailable_hours": unavailable_hours,
         }
 
         rows.append(
@@ -1718,6 +1909,7 @@ with tabs[2]:
     weekdays = ctx["weekdays"]
     non_working = ctx["non_working"]
     daily_hours = ctx["daily_hours"]
+    unavailable_hours = ctx.get("unavailable_hours", {})
 
     month_key = "avail_month_anchor"
     if month_key not in st.session_state:
@@ -1739,14 +1931,37 @@ with tabs[2]:
     view_start = month_start(st.session_state[month_key])
     view_end = month_end(st.session_state[month_key])
 
-    all_working = build_working_dates(sdate, weekdays, non_working, horizon_days=3650)
-    horizon_workdays = max(1, len([d for d in all_working if d <= view_end]))
+    all_capacity_days = build_capacity_days(
+        sdate,
+        weekdays,
+        non_working,
+        daily_hours,
+        unavailable_hours=unavailable_hours,
+        horizon_days=3650,
+    )
+    horizon_workdays = max(1, len([d for d, _ in all_capacity_days if d <= view_end]))
 
     sched_used = ctx["sched_active"] if mode == "Active only" else ctx["sched_all"]
-    alloc = allocate_member_hours(sched_used, sdate, daily_hours, weekdays, non_working, horizon_workdays=horizon_workdays)
-    day_jobs = build_day_job_details(sched_used, sdate, daily_hours, weekdays, non_working, horizon_workdays=horizon_workdays)
+    alloc = allocate_member_hours(
+        sched_used,
+        sdate,
+        daily_hours,
+        weekdays,
+        non_working,
+        horizon_workdays=horizon_workdays,
+        unavailable_hours=unavailable_hours,
+    )
+    day_jobs = build_day_job_details(
+        sched_used,
+        sdate,
+        daily_hours,
+        weekdays,
+        non_working,
+        horizon_workdays=horizon_workdays,
+        unavailable_hours=unavailable_hours,
+    )
 
-    if len(all_working) == 0:
+    if len(all_capacity_days) == 0:
         st.info("No working days available for this member")
     else:
         render_capacity_calendar(alloc, view_start, view_end, weekdays, day_jobs=day_jobs)
