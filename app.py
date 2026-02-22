@@ -1,6 +1,7 @@
 import streamlit as st
 import requests
 from bisect import bisect_right
+from zoneinfo import ZoneInfo
 
 PRIMARY_DATASET_ID = "main"
 SECONDARY_DATASET_ID = "scott"
@@ -118,7 +119,7 @@ def require_login():
 require_login()
 
 import pandas as pd
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 st.markdown(
     '''
@@ -529,6 +530,9 @@ INT_TO_LABEL = {v: k for k, v in WEEKDAY_MAP}
 JOB_COLS = ["Job name", "Required hours", "Priority", "Assignee", "Due date", "Notes"]
 SUPABASE_STATE_TABLE = "app_state"
 SUPABASE_DEFAULT_STATE_ID = PRIMARY_DATASET_ID
+MS_GRAPH_BASE_URL = "https://graph.microsoft.com/v1.0"
+MS_DEFAULT_SCOPES = ["offline_access", "openid", "profile", "User.Read", "Calendars.Read"]
+MS_SNAPSHOT_HORIZON_DAYS = 60
 
 DEFAULT_TEAM_ROWS = [
     {"Member": "SL", "Daily hours": 8.0},
@@ -595,11 +599,111 @@ def get_active_state_id() -> str:
     state_id = str(st.session_state.get("state_dataset_id", SUPABASE_DEFAULT_STATE_ID)).strip()
     return state_id if state_id else SUPABASE_DEFAULT_STATE_ID
 
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
 def _safe_date(value) -> date | None:
     dt = pd.to_datetime(value, errors="coerce")
     if pd.isna(dt):
         return None
     return dt.date()
+
+def _safe_datetime(value) -> datetime | None:
+    dt = pd.to_datetime(value, errors="coerce", utc=True)
+    if pd.isna(dt):
+        return None
+    return dt.to_pydatetime()
+
+def _safe_int(value, default: int = 0) -> int:
+    try:
+        return int(value)
+    except Exception:
+        return int(default)
+
+def _safe_float(value, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except Exception:
+        return float(default)
+
+def _normalize_scope_list(raw_scopes) -> list[str]:
+    if isinstance(raw_scopes, (list, tuple, set)):
+        items = [str(x).strip() for x in raw_scopes]
+    else:
+        items = str(raw_scopes or "").replace(",", " ").split()
+    out: list[str] = []
+    for s in items:
+        if s and s not in out:
+            out.append(s)
+    for req in MS_DEFAULT_SCOPES:
+        if req not in out:
+            out.append(req)
+    return out
+
+def get_microsoft_calendar_config() -> dict:
+    tenant_raw = st.secrets.get("MS_TENANT_ID", "common")
+    client_id_raw = st.secrets.get("MS_CLIENT_ID", "")
+    client_secret_raw = st.secrets.get("MS_CLIENT_SECRET", "")
+    scopes_raw = st.secrets.get("MS_SCOPES", MS_DEFAULT_SCOPES)
+
+    tenant_id = str(tenant_raw).strip() if tenant_raw is not None else "common"
+    tenant_id = tenant_id or "common"
+    client_id = str(client_id_raw).strip() if client_id_raw is not None else ""
+    client_secret = str(client_secret_raw).strip() if client_secret_raw is not None else ""
+    scopes = _normalize_scope_list(scopes_raw)
+
+    return {
+        "tenant_id": tenant_id,
+        "client_id": client_id,
+        "client_secret": client_secret,
+        "scopes": scopes,
+        "scope_text": " ".join(scopes),
+        "device_code_url": f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/devicecode",
+        "token_url": f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token",
+        "ready": bool(client_id),
+    }
+
+def _default_calendar_sync_state() -> dict:
+    return {
+        "provider": "microsoft",
+        "tenant_id": "",
+        "client_id": "",
+        "linked_email": "",
+        "access_token": "",
+        "access_token_expires_at": "",
+        "refresh_token": "",
+        "device_code": "",
+        "device_expires_at": "",
+        "device_interval": 5,
+        "verification_uri": "",
+        "user_code": "",
+        "last_snapshot_at": "",
+        "last_snapshot_member": "",
+        "last_snapshot_event_count": 0,
+        "last_snapshot_hours": 0.0,
+    }
+
+def ensure_calendar_sync_state() -> None:
+    default = _default_calendar_sync_state()
+    current = st.session_state.get("calendar_sync")
+    if not isinstance(current, dict):
+        st.session_state["calendar_sync"] = default
+        return
+    merged = default.copy()
+    for k in default.keys():
+        if k in current:
+            merged[k] = current[k]
+    st.session_state["calendar_sync"] = merged
+
+def get_effective_unavailable_hours(cfg: dict, daily_hours: float) -> dict[date, float]:
+    manual_map = normalize_unavailable_hours(cfg.get("unavailable_hours", {}), daily_hours)
+    calendar_map = normalize_unavailable_hours(cfg.get("calendar_unavailable_hours", {}), daily_hours)
+    out: dict[date, float] = {}
+    for d in set(list(manual_map.keys()) + list(calendar_map.keys())):
+        total = float(manual_map.get(d, 0.0)) + float(calendar_map.get(d, 0.0))
+        if total > 0:
+            out[d] = min(float(daily_hours), total)
+    return out
 
 def _default_member_settings(members: list[str]) -> dict:
     out = {}
@@ -609,6 +713,7 @@ def _default_member_settings(members: list[str]) -> dict:
             "leave_dates": [],
             "start_date": date.today(),
             "unavailable_hours": {},
+            "calendar_unavailable_hours": {},
         }
     return out
 
@@ -636,6 +741,7 @@ def init_local_state_if_missing() -> None:
     if "member_settings" not in st.session_state:
         members = st.session_state["team"]["Member"].astype(str).tolist()
         st.session_state["member_settings"] = _default_member_settings(members)
+    ensure_calendar_sync_state()
 
 def serialize_state_payload() -> dict:
     team_df = _normalize_team_df(st.session_state.get("team", pd.DataFrame(DEFAULT_TEAM_ROWS)))
@@ -676,15 +782,36 @@ def serialize_state_payload() -> dict:
                 continue
             if hv > 0:
                 unavailable_hours[kd.isoformat()] = hv
+        calendar_unavailable_hours = {}
+        for k, v in (cfg.get("calendar_unavailable_hours", {}) or {}).items():
+            kd = _safe_date(k)
+            if kd is None:
+                continue
+            try:
+                hv = float(v)
+            except Exception:
+                continue
+            if hv > 0:
+                calendar_unavailable_hours[kd.isoformat()] = hv
         start = _safe_date(cfg.get("start_date", date.today()))
         settings_records[str(member)] = {
             "weekdays": weekdays,
             "leave_dates": leave_dates,
             "start_date": date.today().isoformat() if start is None else start.isoformat(),
             "unavailable_hours": unavailable_hours,
+            "calendar_unavailable_hours": calendar_unavailable_hours,
         }
 
-    return {"team": team_records, "jobs_raw": jobs_records, "member_settings": settings_records}
+    ensure_calendar_sync_state()
+    sync = st.session_state.get("calendar_sync", _default_calendar_sync_state())
+    sync_record = _calendar_state_clean_for_save(sync)
+
+    return {
+        "team": team_records,
+        "jobs_raw": jobs_records,
+        "member_settings": settings_records,
+        "calendar_sync": sync_record,
+    }
 
 def apply_state_payload(payload: dict) -> None:
     team_df = _normalize_team_df(pd.DataFrame(payload.get("team", DEFAULT_TEAM_ROWS)))
@@ -729,17 +856,36 @@ def apply_state_payload(payload: dict) -> None:
                     continue
                 if h > 0:
                     unavailable_hours[parsed] = h
+            calendar_unavailable_hours = {}
+            for kd, hv in (cfg.get("calendar_unavailable_hours", {}) or {}).items():
+                parsed = _safe_date(kd)
+                if parsed is None:
+                    continue
+                try:
+                    h = float(hv)
+                except Exception:
+                    continue
+                if h > 0:
+                    calendar_unavailable_hours[parsed] = h
             start = _safe_date(cfg.get("start_date"))
             loaded[m] = {
                 "weekdays": weekdays,
                 "leave_dates": leave_dates,
                 "start_date": date.today() if start is None else start,
                 "unavailable_hours": unavailable_hours,
+                "calendar_unavailable_hours": calendar_unavailable_hours,
             }
     for m in members:
         if m not in loaded:
             loaded[m] = defaults[m]
     st.session_state["member_settings"] = loaded
+
+    ensure_calendar_sync_state()
+    incoming_sync = payload.get("calendar_sync", {})
+    if isinstance(incoming_sync, dict):
+        sync = st.session_state.get("calendar_sync", _default_calendar_sync_state())
+        sync.update(_calendar_state_clean_for_save(incoming_sync))
+        st.session_state["calendar_sync"] = sync
 
 def fetch_state_from_cloud() -> tuple[dict | None, str]:
     url, key, ready = get_supabase_config()
@@ -783,6 +929,299 @@ def save_state_to_cloud() -> tuple[bool, str]:
         return True, f"Saved to cloud (dataset: {state_id})."
     except Exception as exc:
         return False, f"Cloud save failed: {exc}"
+
+def _graph_parse_datetime(dt_obj: dict | None) -> datetime | None:
+    if not isinstance(dt_obj, dict):
+        return None
+    dt_raw = str(dt_obj.get("dateTime", "")).strip()
+    if len(dt_raw) == 0:
+        return None
+    parsed = pd.to_datetime(dt_raw, errors="coerce")
+    if pd.isna(parsed):
+        return None
+    dt_val = parsed.to_pydatetime()
+    tz_raw = str(dt_obj.get("timeZone", "")).strip()
+    if dt_val.tzinfo is None:
+        if tz_raw:
+            try:
+                dt_val = dt_val.replace(tzinfo=ZoneInfo(tz_raw))
+            except Exception:
+                dt_val = dt_val.replace(tzinfo=timezone.utc)
+        else:
+            dt_val = dt_val.replace(tzinfo=timezone.utc)
+    return dt_val.astimezone(timezone.utc)
+
+def _calendar_state_clean_for_save(sync: dict) -> dict:
+    clean = _default_calendar_sync_state()
+    clean["provider"] = str(sync.get("provider", "microsoft"))
+    clean["tenant_id"] = str(sync.get("tenant_id", ""))
+    clean["client_id"] = str(sync.get("client_id", ""))
+    clean["linked_email"] = str(sync.get("linked_email", ""))
+    clean["access_token"] = str(sync.get("access_token", ""))
+    clean["access_token_expires_at"] = "" if _safe_datetime(sync.get("access_token_expires_at")) is None else _safe_datetime(sync.get("access_token_expires_at")).isoformat()
+    clean["refresh_token"] = str(sync.get("refresh_token", ""))
+    clean["device_code"] = str(sync.get("device_code", ""))
+    clean["device_expires_at"] = "" if _safe_datetime(sync.get("device_expires_at")) is None else _safe_datetime(sync.get("device_expires_at")).isoformat()
+    clean["device_interval"] = _safe_int(sync.get("device_interval", 5) or 5, 5)
+    clean["verification_uri"] = str(sync.get("verification_uri", ""))
+    clean["user_code"] = str(sync.get("user_code", ""))
+    clean["last_snapshot_at"] = "" if _safe_datetime(sync.get("last_snapshot_at")) is None else _safe_datetime(sync.get("last_snapshot_at")).isoformat()
+    clean["last_snapshot_member"] = str(sync.get("last_snapshot_member", ""))
+    clean["last_snapshot_event_count"] = _safe_int(sync.get("last_snapshot_event_count", 0) or 0, 0)
+    clean["last_snapshot_hours"] = _safe_float(sync.get("last_snapshot_hours", 0.0) or 0.0, 0.0)
+    return clean
+
+def start_microsoft_calendar_link() -> tuple[bool, str]:
+    cfg = get_microsoft_calendar_config()
+    if not cfg["ready"]:
+        return False, "Set MS_CLIENT_ID in Streamlit secrets to enable Microsoft calendar link."
+    body = {"client_id": cfg["client_id"], "scope": cfg["scope_text"]}
+    try:
+        resp = requests.post(cfg["device_code_url"], data=body, timeout=15)
+        data = resp.json()
+    except Exception as exc:
+        return False, f"Calendar link start failed: {exc}"
+    if resp.status_code >= 400:
+        err = str(data.get("error_description", data))[:220]
+        return False, f"Calendar link start failed ({resp.status_code}): {err}"
+
+    ensure_calendar_sync_state()
+    sync = st.session_state["calendar_sync"]
+    sync["provider"] = "microsoft"
+    sync["tenant_id"] = cfg["tenant_id"]
+    sync["client_id"] = cfg["client_id"]
+    sync["device_code"] = str(data.get("device_code", ""))
+    sync["verification_uri"] = str(data.get("verification_uri", ""))
+    sync["user_code"] = str(data.get("user_code", ""))
+    sync["device_interval"] = _safe_int(data.get("interval", 5) or 5, 5)
+    sync["device_expires_at"] = (_utc_now() + timedelta(seconds=_safe_int(data.get("expires_in", 900) or 900, 900))).isoformat()
+    st.session_state["calendar_sync"] = sync
+
+    if len(sync["device_code"]) == 0:
+        return False, "Calendar link start failed: missing device code response."
+    return True, f"Open {sync['verification_uri']} and enter code {sync['user_code']} to link Microsoft calendar."
+
+def _store_graph_tokens(token_data: dict) -> None:
+    ensure_calendar_sync_state()
+    sync = st.session_state["calendar_sync"]
+    sync["access_token"] = str(token_data.get("access_token", ""))
+    sync["refresh_token"] = str(token_data.get("refresh_token", sync.get("refresh_token", "")))
+    expires_in = _safe_int(token_data.get("expires_in", 3600) or 3600, 3600)
+    sync["access_token_expires_at"] = (_utc_now() + timedelta(seconds=expires_in)).isoformat()
+    # Device code flow has completed; clear pending prompt details.
+    sync["device_code"] = ""
+    sync["device_expires_at"] = ""
+    sync["verification_uri"] = ""
+    sync["user_code"] = ""
+    st.session_state["calendar_sync"] = sync
+
+def _fetch_graph_identity(access_token: str) -> str:
+    if len(access_token.strip()) == 0:
+        return ""
+    try:
+        resp = requests.get(
+            f"{MS_GRAPH_BASE_URL}/me?$select=mail,userPrincipalName",
+            headers={"Authorization": f"Bearer {access_token}"},
+            timeout=15,
+        )
+        if resp.status_code >= 400:
+            return ""
+        data = resp.json()
+    except Exception:
+        return ""
+    mail = str(data.get("mail", "")).strip()
+    upn = str(data.get("userPrincipalName", "")).strip()
+    return mail or upn
+
+def get_microsoft_access_token() -> tuple[str | None, str]:
+    cfg = get_microsoft_calendar_config()
+    if not cfg["ready"]:
+        return None, "Set MS_CLIENT_ID in Streamlit secrets to enable Microsoft calendar sync."
+
+    ensure_calendar_sync_state()
+    sync = st.session_state["calendar_sync"]
+    sync["tenant_id"] = cfg["tenant_id"]
+    sync["client_id"] = cfg["client_id"]
+    st.session_state["calendar_sync"] = sync
+
+    now = _utc_now()
+    access_token = str(sync.get("access_token", ""))
+    access_exp = _safe_datetime(sync.get("access_token_expires_at"))
+    if access_token and access_exp is not None and access_exp > now + timedelta(minutes=2):
+        return access_token, "Using existing Microsoft calendar token."
+
+    refresh_token = str(sync.get("refresh_token", ""))
+    if refresh_token:
+        refresh_body = {
+            "client_id": cfg["client_id"],
+            "grant_type": "refresh_token",
+            "refresh_token": refresh_token,
+            "scope": cfg["scope_text"],
+        }
+        if len(cfg["client_secret"]) > 0:
+            refresh_body["client_secret"] = cfg["client_secret"]
+        try:
+            refresh_resp = requests.post(cfg["token_url"], data=refresh_body, timeout=15)
+            refresh_data = refresh_resp.json()
+        except Exception as exc:
+            return None, f"Calendar token refresh failed: {exc}"
+        if refresh_resp.status_code < 400 and str(refresh_data.get("access_token", "")).strip():
+            _store_graph_tokens(refresh_data)
+            fresh_sync = st.session_state["calendar_sync"]
+            identity = _fetch_graph_identity(fresh_sync.get("access_token", ""))
+            if identity:
+                fresh_sync["linked_email"] = identity
+                st.session_state["calendar_sync"] = fresh_sync
+            return fresh_sync.get("access_token", ""), "Microsoft calendar linked."
+
+    device_code = str(sync.get("device_code", ""))
+    device_exp = _safe_datetime(sync.get("device_expires_at"))
+    if device_code and device_exp is not None and device_exp > now:
+        poll_body = {
+            "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
+            "client_id": cfg["client_id"],
+            "device_code": device_code,
+        }
+        if len(cfg["client_secret"]) > 0:
+            poll_body["client_secret"] = cfg["client_secret"]
+        try:
+            poll_resp = requests.post(cfg["token_url"], data=poll_body, timeout=15)
+            poll_data = poll_resp.json()
+        except Exception as exc:
+            return None, f"Calendar authorization poll failed: {exc}"
+
+        if poll_resp.status_code < 400 and str(poll_data.get("access_token", "")).strip():
+            _store_graph_tokens(poll_data)
+            fresh_sync = st.session_state["calendar_sync"]
+            identity = _fetch_graph_identity(fresh_sync.get("access_token", ""))
+            if identity:
+                fresh_sync["linked_email"] = identity
+                st.session_state["calendar_sync"] = fresh_sync
+            return fresh_sync.get("access_token", ""), "Microsoft calendar linked."
+
+        err_code = str(poll_data.get("error", "")).strip().lower()
+        if err_code in {"authorization_pending", "slow_down"}:
+            return None, f"Finish linking in browser: {sync.get('verification_uri', '')} (code {sync.get('user_code', '')})."
+        if err_code in {"expired_token", "authorization_declined", "bad_verification_code"}:
+            sync["device_code"] = ""
+            sync["device_expires_at"] = ""
+            sync["verification_uri"] = ""
+            sync["user_code"] = ""
+            st.session_state["calendar_sync"] = sync
+            return None, "Calendar linking session expired. Click Link calander to start again."
+        err_desc = str(poll_data.get("error_description", poll_data))[:220]
+        return None, f"Calendar authorization failed: {err_desc}"
+
+    return None, "Calendar not linked yet. Click Link calander and complete Microsoft sign-in."
+
+def fetch_microsoft_calendar_events(access_token: str, start_dt: datetime, end_dt: datetime) -> tuple[list[dict] | None, str]:
+    start_iso = start_dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+    end_iso = end_dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Prefer": 'outlook.timezone="UTC"',
+    }
+    params = {
+        "startDateTime": start_iso,
+        "endDateTime": end_iso,
+        "$select": "id,subject,start,end,isCancelled,showAs",
+    }
+    events: list[dict] = []
+    next_url = f"{MS_GRAPH_BASE_URL}/me/calendarView"
+    try:
+        while next_url:
+            if next_url.endswith("/calendarView"):
+                resp = requests.get(next_url, headers=headers, params=params, timeout=20)
+            else:
+                resp = requests.get(next_url, headers=headers, timeout=20)
+            data = resp.json()
+            if resp.status_code >= 400:
+                err = str(data.get("error", data))[:240]
+                return None, f"Calendar fetch failed ({resp.status_code}): {err}"
+            values = data.get("value", [])
+            if isinstance(values, list):
+                events.extend([v for v in values if isinstance(v, dict)])
+            next_url = data.get("@odata.nextLink")
+    except Exception as exc:
+        return None, f"Calendar fetch failed: {exc}"
+    return events, f"Fetched {len(events)} calendar events."
+
+def map_events_to_daily_unavailable(events: list[dict], start_day: date, end_day: date) -> tuple[dict[date, float], int]:
+    if end_day < start_day:
+        return {}, 0
+    range_start = datetime.combine(start_day, datetime.min.time(), tzinfo=timezone.utc)
+    range_end = datetime.combine(end_day + timedelta(days=1), datetime.min.time(), tzinfo=timezone.utc)
+    totals: dict[date, float] = {}
+    counted_events = 0
+    for ev in events:
+        if bool(ev.get("isCancelled", False)):
+            continue
+        show_as = str(ev.get("showAs", "")).strip().lower()
+        if show_as == "free":
+            continue
+        st_dt = _graph_parse_datetime(ev.get("start"))
+        en_dt = _graph_parse_datetime(ev.get("end"))
+        if st_dt is None or en_dt is None or en_dt <= st_dt:
+            continue
+        st_dt = max(st_dt, range_start)
+        en_dt = min(en_dt, range_end)
+        if en_dt <= st_dt:
+            continue
+        counted_events += 1
+
+        cursor = st_dt
+        while cursor < en_dt:
+            day_boundary = datetime.combine(cursor.date() + timedelta(days=1), datetime.min.time(), tzinfo=timezone.utc)
+            segment_end = min(en_dt, day_boundary)
+            hrs = max((segment_end - cursor).total_seconds() / 3600.0, 0.0)
+            if hrs > 0:
+                totals[cursor.date()] = totals.get(cursor.date(), 0.0) + hrs
+            cursor = segment_end
+    return totals, counted_events
+
+def resolve_calendar_target_member(members: list[str]) -> str | None:
+    if len(members) == 0:
+        return None
+    secret_pref = str(st.secrets.get("MS_CALENDAR_MEMBER", "")).strip()
+    if secret_pref in members:
+        return secret_pref
+    return members[0]
+
+def refresh_microsoft_calendar_snapshot(target_member: str | None, horizon_days: int = MS_SNAPSHOT_HORIZON_DAYS) -> tuple[bool, str]:
+    if target_member is None:
+        return False, "No team member available for calendar sync."
+    access_token, token_msg = get_microsoft_access_token()
+    if access_token is None:
+        return False, token_msg
+
+    start_day = date.today()
+    end_day = start_day + timedelta(days=max(int(horizon_days), 1))
+    start_dt = datetime.combine(start_day, datetime.min.time(), tzinfo=timezone.utc)
+    end_dt = datetime.combine(end_day + timedelta(days=1), datetime.min.time(), tzinfo=timezone.utc)
+
+    events, fetch_msg = fetch_microsoft_calendar_events(access_token, start_dt, end_dt)
+    if events is None:
+        return False, fetch_msg
+    unavailable_by_day, counted_events = map_events_to_daily_unavailable(events, start_day, end_day)
+
+    ms = st.session_state.get("member_settings", {})
+    cfg = ms.get(target_member, {})
+    cfg["calendar_unavailable_hours"] = {d: float(h) for d, h in unavailable_by_day.items() if float(h) > 0.0}
+    ms[target_member] = cfg
+    st.session_state["member_settings"] = ms
+
+    ensure_calendar_sync_state()
+    sync = st.session_state["calendar_sync"]
+    sync["last_snapshot_at"] = _utc_now().isoformat()
+    sync["last_snapshot_member"] = target_member
+    sync["last_snapshot_event_count"] = counted_events
+    sync["last_snapshot_hours"] = float(sum(unavailable_by_day.values()))
+    st.session_state["calendar_sync"] = sync
+
+    return True, (
+        f"Calendar snapshot refreshed for {target_member}: "
+        f"{counted_events} events, {float(sum(unavailable_by_day.values())):.1f}h unavailable over next {horizon_days} days."
+    )
 
 def normalize_active_priorities(jobs: pd.DataFrame) -> pd.DataFrame:
     if jobs.empty:
@@ -1035,7 +1474,13 @@ def ensure_member_settings(members: list[str]) -> None:
     ms = st.session_state["member_settings"]
     for m in members:
         if m not in ms:
-            ms[m] = {"weekdays": {0, 1, 2, 3, 4}, "leave_dates": [], "start_date": date.today(), "unavailable_hours": {}}
+            ms[m] = {
+                "weekdays": {0, 1, 2, 3, 4},
+                "leave_dates": [],
+                "start_date": date.today(),
+                "unavailable_hours": {},
+                "calendar_unavailable_hours": {},
+            }
         if "weekdays" not in ms[m]:
             ms[m]["weekdays"] = {0, 1, 2, 3, 4}
         if "leave_dates" not in ms[m]:
@@ -1044,6 +1489,8 @@ def ensure_member_settings(members: list[str]) -> None:
             ms[m]["start_date"] = date.today()
         if "unavailable_hours" not in ms[m] or not isinstance(ms[m]["unavailable_hours"], dict):
             ms[m]["unavailable_hours"] = {}
+        if "calendar_unavailable_hours" not in ms[m] or not isinstance(ms[m]["calendar_unavailable_hours"], dict):
+            ms[m]["calendar_unavailable_hours"] = {}
     for m in list(ms.keys()):
         if m not in members:
             del ms[m]
@@ -1294,8 +1741,39 @@ with st.sidebar:
 
     st.divider()
     st.subheader("Calander sync")
-    st.button("Link calander", key="link_calander_btn_sidebar", use_container_width=True)
-    st.button("Refresh calander snapshot", key="refresh_calander_snapshot_btn_sidebar", use_container_width=True)
+    sidebar_members = team_df["Member"].astype(str).tolist() if not team_df.empty else []
+    sync_member = resolve_calendar_target_member(sidebar_members)
+    if sync_member is not None:
+        st.caption(f"Sync member: {sync_member}")
+
+    if st.button("Link calander", key="link_calander_btn_sidebar", use_container_width=True):
+        ok, msg = start_microsoft_calendar_link()
+        st.session_state["calendar_sync_message"] = msg
+        if ok:
+            st.success(msg)
+        else:
+            st.error(msg)
+    if st.button("Refresh calander snapshot", key="refresh_calander_snapshot_btn_sidebar", use_container_width=True):
+        ok, msg = refresh_microsoft_calendar_snapshot(sync_member)
+        st.session_state["calendar_sync_message"] = msg
+        if ok:
+            st.success(msg)
+            st.rerun()
+        else:
+            st.error(msg)
+
+    ensure_calendar_sync_state()
+    sync_state = st.session_state.get("calendar_sync", {})
+    pending_code = str(sync_state.get("user_code", "")).strip()
+    pending_url = str(sync_state.get("verification_uri", "")).strip()
+    pending_exp = _safe_datetime(sync_state.get("device_expires_at"))
+    if pending_code and pending_url and pending_exp is not None and pending_exp > _utc_now():
+        st.caption(f"To link: open {pending_url} and enter code {pending_code}")
+    linked_email = str(sync_state.get("linked_email", "")).strip()
+    if linked_email:
+        st.caption(f"Linked: {linked_email}")
+    if "calendar_sync_message" in st.session_state:
+        st.caption(f"Status: {st.session_state['calendar_sync_message']}")
 
 team_members = team_df["Member"].astype(str).tolist() if not team_df.empty else []
 member_hours = {row["Member"]: float(row["Daily hours"]) for _, row in team_df.iterrows()} if not team_df.empty else {}
@@ -1369,9 +1847,9 @@ with tabs[0]:
         ms = st.session_state["member_settings"][member]
         weekdays = ms["weekdays"]
         non_working = set(ms["leave_dates"])
-        unavailable_hours = ms.get("unavailable_hours", {})
-        sdate = ms.get("start_date", date.today())
         daily_hours = float(member_hours.get(member, 8.0))
+        unavailable_hours = get_effective_unavailable_hours(ms, daily_hours)
+        sdate = ms.get("start_date", date.today())
         member_working_cfg[member] = {
             "capacity_days": build_capacity_days(
                 sdate,
@@ -1476,7 +1954,10 @@ with tabs[0]:
             non_working = set(cfg.get("non_working", set(st.session_state["member_settings"][member]["leave_dates"])))
             sdate = cfg.get("sdate", st.session_state["member_settings"][member].get("start_date", date.today()))
             daily_hours = float(cfg.get("daily_hours", member_hours.get(member, 8.0)))
-            unavailable_hours = cfg.get("unavailable_hours", st.session_state["member_settings"][member].get("unavailable_hours", {}))
+            unavailable_hours = cfg.get(
+                "unavailable_hours",
+                get_effective_unavailable_hours(st.session_state["member_settings"][member], daily_hours),
+            )
             sched_member = member_active_sched.get(member, pd.DataFrame())
 
             capacity_days = cfg.get("capacity_days")
@@ -1640,7 +2121,7 @@ with tabs[1]:
             parsed = pd.to_datetime(d, errors="coerce")
             if pd.notna(parsed):
                 leave_set.add(parsed.date())
-        unavailable_map = {}
+        manual_unavailable_map = {}
         for kd, hv in (st.session_state["member_settings"][selected_member].get("unavailable_hours", {}) or {}).items():
             parsed = pd.to_datetime(kd, errors="coerce")
             if pd.isna(parsed):
@@ -1650,9 +2131,14 @@ with tabs[1]:
             except Exception:
                 continue
             if hours_val > 0:
-                unavailable_map[parsed.date()] = hours_val
+                manual_unavailable_map[parsed.date()] = hours_val
+        selected_daily_hours = float(member_hours.get(selected_member, 8.0))
+        preview_unavailable_map = get_effective_unavailable_hours(
+            st.session_state["member_settings"][selected_member],
+            selected_daily_hours,
+        )
 
-        render_leave_month_preview(st.session_state[leave_month_key], leave_set, unavailable_hours=unavailable_map)
+        render_leave_month_preview(st.session_state[leave_month_key], leave_set, unavailable_hours=preview_unavailable_map)
 
         pick_key = f"leave_pick_{selected_member}"
         if pick_key not in st.session_state:
@@ -1664,38 +2150,38 @@ with tabs[1]:
             min_value=0.0,
             max_value=24.0,
             step=0.5,
-            value=float(unavailable_map.get(picked_date, 0.0)),
+            value=float(manual_unavailable_map.get(picked_date, 0.0)),
             key=f"unavail_hours_input_{selected_member}",
         )
         act1, act2, act3 = st.columns(3, gap="small")
         with act1:
             if st.button("Mark non-working", key=f"leave_mark_off_{selected_member}", use_container_width=True):
                 leave_set.add(picked_date)
-                if picked_date in unavailable_map:
-                    del unavailable_map[picked_date]
+                if picked_date in manual_unavailable_map:
+                    del manual_unavailable_map[picked_date]
                 st.session_state["member_settings"][selected_member]["leave_dates"] = sorted(list(leave_set))
-                st.session_state["member_settings"][selected_member]["unavailable_hours"] = unavailable_map
+                st.session_state["member_settings"][selected_member]["unavailable_hours"] = manual_unavailable_map
                 st.rerun()
         with act2:
             if st.button("Mark working", key=f"leave_mark_on_{selected_member}", use_container_width=True):
                 if picked_date in leave_set:
                     leave_set.remove(picked_date)
-                if picked_date in unavailable_map:
-                    del unavailable_map[picked_date]
+                if picked_date in manual_unavailable_map:
+                    del manual_unavailable_map[picked_date]
                 st.session_state["member_settings"][selected_member]["leave_dates"] = sorted(list(leave_set))
-                st.session_state["member_settings"][selected_member]["unavailable_hours"] = unavailable_map
+                st.session_state["member_settings"][selected_member]["unavailable_hours"] = manual_unavailable_map
                 st.rerun()
         with act3:
             if st.button("Mark unavailable", key=f"leave_mark_unavailable_{selected_member}", use_container_width=True):
                 if picked_date in leave_set:
                     leave_set.remove(picked_date)
                 if float(unavail_hours) <= 0:
-                    if picked_date in unavailable_map:
-                        del unavailable_map[picked_date]
+                    if picked_date in manual_unavailable_map:
+                        del manual_unavailable_map[picked_date]
                 else:
-                    unavailable_map[picked_date] = float(unavail_hours)
+                    manual_unavailable_map[picked_date] = float(unavail_hours)
                 st.session_state["member_settings"][selected_member]["leave_dates"] = sorted(list(leave_set))
-                st.session_state["member_settings"][selected_member]["unavailable_hours"] = unavailable_map
+                st.session_state["member_settings"][selected_member]["unavailable_hours"] = manual_unavailable_map
                 st.rerun()
 
         st.caption("Use buttons to mark full non-working days, clear to working, or set partial unavailable hours.")
@@ -1766,8 +2252,8 @@ with tabs[1]:
         ms = st.session_state["member_settings"][selected_member]
         weekdays = ms["weekdays"]
         non_working = set(ms["leave_dates"])
-        unavailable_hours = ms.get("unavailable_hours", {})
         daily_hours = float(member_hours.get(selected_member, 8.0))
+        unavailable_hours = get_effective_unavailable_hours(ms, daily_hours)
 
         jobs_norm = normalize_active_priorities(clean_jobs_df(combined_norm))
         jobs_norm = add_status_columns(jobs_norm)
@@ -1818,9 +2304,9 @@ with tabs[2]:
         ms = st.session_state["member_settings"][member]
         weekdays = ms["weekdays"]
         non_working = set(ms["leave_dates"])
-        unavailable_hours = ms.get("unavailable_hours", {})
-        sdate = ms.get("start_date", date.today())
         daily_hours = float(member_hours.get(member, 8.0))
+        unavailable_hours = get_effective_unavailable_hours(ms, daily_hours)
+        sdate = ms.get("start_date", date.today())
 
         member_jobs = jobs_norm[jobs_norm["Assignee"] == member].copy()
         active = member_jobs[member_jobs["Priority"] >= 1].copy()
