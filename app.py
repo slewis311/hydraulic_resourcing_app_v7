@@ -569,7 +569,12 @@ def _safe_date(value) -> date | None:
 def _default_member_settings(members: list[str]) -> dict:
     out = {}
     for m in members:
-        out[m] = {"weekdays": {0, 1, 2, 3, 4}, "leave_dates": [], "start_date": date.today()}
+        out[m] = {
+            "weekdays": {0, 1, 2, 3, 4},
+            "leave_dates": [],
+            "start_date": date.today(),
+            "unavailable_hours": {},
+        }
     return out
 
 def _normalize_team_df(df: pd.DataFrame) -> pd.DataFrame:
@@ -625,11 +630,23 @@ def serialize_state_payload() -> dict:
             parsed = _safe_date(d)
             if parsed is not None:
                 leave_dates.append(parsed.isoformat())
+        unavailable_hours = {}
+        for k, v in (cfg.get("unavailable_hours", {}) or {}).items():
+            kd = _safe_date(k)
+            if kd is None:
+                continue
+            try:
+                hv = float(v)
+            except Exception:
+                continue
+            if hv > 0:
+                unavailable_hours[kd.isoformat()] = hv
         start = _safe_date(cfg.get("start_date", date.today()))
         settings_records[str(member)] = {
             "weekdays": weekdays,
             "leave_dates": leave_dates,
             "start_date": date.today().isoformat() if start is None else start.isoformat(),
+            "unavailable_hours": unavailable_hours,
         }
 
     return {"team": team_records, "jobs_raw": jobs_records, "member_settings": settings_records}
@@ -666,11 +683,23 @@ def apply_state_payload(payload: dict) -> None:
                 parsed = _safe_date(d)
                 if parsed is not None:
                     leave_dates.append(parsed)
+            unavailable_hours = {}
+            for kd, hv in (cfg.get("unavailable_hours", {}) or {}).items():
+                parsed = _safe_date(kd)
+                if parsed is None:
+                    continue
+                try:
+                    h = float(hv)
+                except Exception:
+                    continue
+                if h > 0:
+                    unavailable_hours[parsed] = h
             start = _safe_date(cfg.get("start_date"))
             loaded[m] = {
                 "weekdays": weekdays,
                 "leave_dates": leave_dates,
                 "start_date": date.today() if start is None else start,
+                "unavailable_hours": unavailable_hours,
             }
     for m in members:
         if m not in loaded:
@@ -873,7 +902,15 @@ def ensure_member_settings(members: list[str]) -> None:
     ms = st.session_state["member_settings"]
     for m in members:
         if m not in ms:
-            ms[m] = {"weekdays": {0, 1, 2, 3, 4}, "leave_dates": [], "start_date": date.today()}
+            ms[m] = {"weekdays": {0, 1, 2, 3, 4}, "leave_dates": [], "start_date": date.today(), "unavailable_hours": {}}
+        if "weekdays" not in ms[m]:
+            ms[m]["weekdays"] = {0, 1, 2, 3, 4}
+        if "leave_dates" not in ms[m]:
+            ms[m]["leave_dates"] = []
+        if "start_date" not in ms[m]:
+            ms[m]["start_date"] = date.today()
+        if "unavailable_hours" not in ms[m] or not isinstance(ms[m]["unavailable_hours"], dict):
+            ms[m]["unavailable_hours"] = {}
     for m in list(ms.keys()):
         if m not in members:
             del ms[m]
@@ -1039,7 +1076,8 @@ def render_capacity_calendar(alloc: pd.DataFrame, start: date, end: date, weekda
     html += "</tbody></table>"
     st.markdown(html, unsafe_allow_html=True)
 
-def render_leave_month_preview(anchor_month: date, leave_dates: set[date]):
+def render_leave_month_preview(anchor_month: date, leave_dates: set[date], unavailable_hours: dict[date, float] | None = None):
+    unavailable_hours = unavailable_hours or {}
     start = month_start(anchor_month)
     end = month_end(anchor_month)
     week_start = start - timedelta(days=start.weekday())
@@ -1066,6 +1104,8 @@ def render_leave_month_preview(anchor_month: date, leave_dates: set[date]):
                 continue
             if d in leave_dates:
                 html += f"<td><div class='cal-date'>{ordinal_day(d.day)}</div><span class='pill pill-red'>Non working</span></td>"
+            elif d in unavailable_hours and float(unavailable_hours.get(d, 0.0)) > 0:
+                html += f"<td><div class='cal-date'>{ordinal_day(d.day)}</div><span class='pill pill-amber'>Unavailable {float(unavailable_hours[d]):.1f}h</span></td>"
             else:
                 html += f"<td><div class='cal-date'>{ordinal_day(d.day)}</div></td>"
         html += "</tr>"
@@ -1435,28 +1475,65 @@ with tabs[1]:
             parsed = pd.to_datetime(d, errors="coerce")
             if pd.notna(parsed):
                 leave_set.add(parsed.date())
+        unavailable_map = {}
+        for kd, hv in (st.session_state["member_settings"][selected_member].get("unavailable_hours", {}) or {}).items():
+            parsed = pd.to_datetime(kd, errors="coerce")
+            if pd.isna(parsed):
+                continue
+            try:
+                hours_val = float(hv)
+            except Exception:
+                continue
+            if hours_val > 0:
+                unavailable_map[parsed.date()] = hours_val
 
-        render_leave_month_preview(st.session_state[leave_month_key], leave_set)
+        render_leave_month_preview(st.session_state[leave_month_key], leave_set, unavailable_hours=unavailable_map)
 
         pick_key = f"leave_pick_{selected_member}"
         if pick_key not in st.session_state:
             st.session_state[pick_key] = date.today()
         picked = st.date_input("Select day to update", value=st.session_state[pick_key], key=pick_key)
         picked_date = pd.to_datetime(picked, errors="coerce").date()
-        act1, act2 = st.columns(2, gap="small")
+        unavail_hours = st.number_input(
+            "Unavailable hours for selected day",
+            min_value=0.0,
+            max_value=24.0,
+            step=0.5,
+            value=float(unavailable_map.get(picked_date, 0.0)),
+            key=f"unavail_hours_input_{selected_member}",
+        )
+        act1, act2, act3 = st.columns(3, gap="small")
         with act1:
             if st.button("Mark non-working", key=f"leave_mark_off_{selected_member}", use_container_width=True):
                 leave_set.add(picked_date)
+                if picked_date in unavailable_map:
+                    del unavailable_map[picked_date]
                 st.session_state["member_settings"][selected_member]["leave_dates"] = sorted(list(leave_set))
+                st.session_state["member_settings"][selected_member]["unavailable_hours"] = unavailable_map
                 st.rerun()
         with act2:
             if st.button("Mark working", key=f"leave_mark_on_{selected_member}", use_container_width=True):
                 if picked_date in leave_set:
                     leave_set.remove(picked_date)
+                if picked_date in unavailable_map:
+                    del unavailable_map[picked_date]
                 st.session_state["member_settings"][selected_member]["leave_dates"] = sorted(list(leave_set))
+                st.session_state["member_settings"][selected_member]["unavailable_hours"] = unavailable_map
+                st.rerun()
+        with act3:
+            if st.button("Mark unavailable", key=f"leave_mark_unavailable_{selected_member}", use_container_width=True):
+                if picked_date in leave_set:
+                    leave_set.remove(picked_date)
+                if float(unavail_hours) <= 0:
+                    if picked_date in unavailable_map:
+                        del unavailable_map[picked_date]
+                else:
+                    unavailable_map[picked_date] = float(unavail_hours)
+                st.session_state["member_settings"][selected_member]["leave_dates"] = sorted(list(leave_set))
+                st.session_state["member_settings"][selected_member]["unavailable_hours"] = unavailable_map
                 st.rerun()
 
-        st.caption("Use the month view for planning and toggle selected dates with the buttons.")
+        st.caption("Use buttons to mark full non-working days, clear to working, or set partial unavailable hours.")
         st.markdown('</div>', unsafe_allow_html=True)
         st.markdown('</div>', unsafe_allow_html=True)
 
