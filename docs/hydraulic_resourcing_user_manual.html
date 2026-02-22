@@ -1,0 +1,511 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Hydraulic Resourcing App - User Manual</title>
+  <style>
+    :root {
+      --bg-a: #f6fbfd;
+      --bg-b: #edf7fa;
+      --ink-1: #10242f;
+      --ink-2: #4a6270;
+      --line: rgba(16, 36, 47, 0.18);
+      --brand: #24a7b3;
+      --brand-dark: #167f99;
+      --brand-soft: #59c0c9;
+      --accent: #efe73f;
+      --card: #ffffff;
+      --ok: #2dbb77;
+      --warn-early: #f0c92d;
+      --warn: #f29d2d;
+      --critical: #d9534f;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: "Segoe UI", Tahoma, Arial, sans-serif;
+      color: var(--ink-1);
+      background:
+        linear-gradient(120deg, rgba(36,167,179,0.08), transparent 35%),
+        radial-gradient(800px 300px at 90% -10%, rgba(36,167,179,0.22), transparent 60%),
+        radial-gradient(600px 220px at 10% 0%, rgba(239,231,63,0.14), transparent 58%),
+        linear-gradient(180deg, var(--bg-a), var(--bg-b));
+      line-height: 1.55;
+    }
+
+    .page {
+      max-width: 980px;
+      margin: 0 auto;
+      padding: 28px 22px 60px;
+    }
+
+    .hero {
+      background: linear-gradient(135deg, var(--brand-dark), var(--brand) 56%, var(--brand-soft));
+      border: 1px solid rgba(255,255,255,0.35);
+      border-radius: 18px;
+      padding: 24px;
+      color: #f7fcff;
+      box-shadow: 0 16px 34px rgba(22, 92, 113, 0.26);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .hero:after {
+      content: "";
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      height: 5px;
+      background: linear-gradient(90deg, var(--accent), rgba(239,231,63,0.2));
+    }
+
+    .hero h1 {
+      margin: 0 0 6px;
+      font-size: 2.05rem;
+      line-height: 1.2;
+      letter-spacing: -0.01em;
+    }
+
+    .hero p {
+      margin: 0;
+      font-size: 1rem;
+      color: rgba(240, 249, 252, 0.95);
+    }
+
+    .meta {
+      margin-top: 10px;
+      font-size: 0.9rem;
+      color: rgba(240, 249, 252, 0.92);
+    }
+
+    .card {
+      background: rgba(255,255,255,0.9);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 14px 16px;
+      margin-top: 14px;
+    }
+
+    .toc {
+      columns: 2;
+      column-gap: 26px;
+      margin: 0;
+      padding-left: 18px;
+    }
+
+    .toc li { margin-bottom: 5px; }
+
+    h2 {
+      margin-top: 28px;
+      margin-bottom: 10px;
+      font-size: 1.42rem;
+      color: #133242;
+      border-bottom: 2px solid rgba(31,126,151,0.2);
+      padding-bottom: 6px;
+    }
+
+    h3 {
+      margin-top: 18px;
+      margin-bottom: 8px;
+      font-size: 1.07rem;
+      color: #18455a;
+    }
+
+    p { margin: 8px 0; }
+
+    ul, ol {
+      margin: 8px 0 8px 18px;
+      padding: 0;
+    }
+
+    li { margin: 6px 0; }
+
+    .chip {
+      display: inline-block;
+      border-radius: 999px;
+      border: 1px solid rgba(31,126,151,0.32);
+      background: rgba(255,255,255,0.95);
+      padding: 2px 10px;
+      font-size: 0.82rem;
+      font-weight: 700;
+      color: #1d5d74;
+      margin-right: 6px;
+    }
+
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(230px, 1fr));
+      gap: 10px;
+    }
+
+    .kpi {
+      border: 1px solid rgba(31,126,151,0.24);
+      border-radius: 12px;
+      background: #fff;
+      padding: 10px;
+    }
+
+    .kpi strong { color: #103547; }
+
+    .status {
+      display: inline-block;
+      font-weight: 700;
+      border-radius: 999px;
+      padding: 1px 10px;
+      border: 1px solid rgba(16,36,47,0.2);
+      margin-right: 6px;
+      margin-bottom: 5px;
+    }
+
+    .healthy { background: rgba(45, 187, 119, 0.22); }
+    .early { background: rgba(240, 201, 45, 0.30); }
+    .warning { background: rgba(242, 157, 45, 0.30); }
+    .critical { background: rgba(217, 83, 79, 0.24); }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 8px;
+      font-size: 0.95rem;
+    }
+
+    th, td {
+      border: 1px solid rgba(16,36,47,0.2);
+      padding: 8px 9px;
+      vertical-align: top;
+      text-align: left;
+    }
+
+    th {
+      background: rgba(36,167,179,0.12);
+      color: #12465b;
+      font-weight: 700;
+    }
+
+    .callout {
+      border-left: 4px solid var(--brand);
+      background: rgba(36,167,179,0.08);
+      padding: 8px 10px;
+      border-radius: 8px;
+      margin: 10px 0;
+    }
+
+    .small { font-size: 0.9rem; color: var(--ink-2); }
+
+    .footer {
+      margin-top: 34px;
+      font-size: 0.84rem;
+      color: #4b6573;
+      border-top: 1px solid rgba(31,126,151,0.22);
+      padding-top: 10px;
+    }
+
+    .page-break {
+      margin-top: 26px;
+      border-top: 2px dashed rgba(31,126,151,0.25);
+      padding-top: 20px;
+    }
+
+    @media (max-width: 840px) {
+      .toc { columns: 1; }
+      .kpi-grid { grid-template-columns: 1fr; }
+      .hero h1 { font-size: 1.8rem; }
+    }
+
+    @media print {
+      @page { size: A4; margin: 14mm; }
+      body { background: #fff; }
+      .page { max-width: 100%; padding: 0; }
+      .hero { box-shadow: none; }
+      .card { box-shadow: none; }
+      a { color: #103547; text-decoration: none; }
+      .page-break { break-before: page; border: 0; padding-top: 0; }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <section class="hero">
+      <h1>Hydraulic Resourcing App<br />User Manual</h1>
+      <p>Beginner-friendly guide for planning team capacity, priorities, due dates, and delivery health.</p>
+      <div class="meta">Version 1.0 | Last updated: February 22, 2026</div>
+    </section>
+
+    <section class="card">
+      <strong>How to use this manual</strong>
+      <p class="small">Read sections in order for first-time setup, then keep this as a quick reference.</p>
+      <div>
+        <span class="chip">Quick Start</span>
+        <span class="chip">Daily Workflow</span>
+        <span class="chip">Calendar Sync</span>
+        <span class="chip">Troubleshooting</span>
+      </div>
+    </section>
+
+    <section class="card">
+      <strong>Export to PDF</strong>
+      <ol>
+        <li>Open this file in a browser: <code>docs/hydraulic_resourcing_user_manual.html</code></li>
+        <li>Press <code>Ctrl/Cmd + P</code></li>
+        <li>Choose <em>Save as PDF</em></li>
+      </ol>
+    </section>
+
+    <section class="card">
+      <strong>Contents</strong>
+      <ol class="toc">
+        <li>App purpose</li>
+        <li>What the app does</li>
+        <li>First-time setup</li>
+        <li>Daily workflow</li>
+        <li>Team dashboard</li>
+        <li>Staff pages</li>
+        <li>Availability page</li>
+        <li>Cloud sync</li>
+        <li>Microsoft calendar sync</li>
+        <li>KPI glossary</li>
+        <li>Troubleshooting</li>
+      </ol>
+    </section>
+
+    <h2>1. App Purpose</h2>
+    <p>
+      The purpose of this app is to give teams and management a shared, accurate view of real delivery capacity so commitments can be made with confidence.
+    </p>
+    <ul>
+      <li>Helps team members track true availability and understand what delivery windows they can commit to.</li>
+      <li>Makes scheduling conflicts and clashing priorities visible early so they can be escalated quickly.</li>
+      <li>Supports management in identifying staffing pressure and when additional resourcing may be required.</li>
+      <li>Highlights opportunities to rebalance work across the team to protect due dates.</li>
+      <li>Acts as a safety guardrail so people are not overloaded while project delivery remains realistic and controlled.</li>
+    </ul>
+
+    <h2>2. What The App Does</h2>
+    <p>The Hydraulic Resourcing App helps you:</p>
+    <ul>
+      <li>Set team members and available daily hours</li>
+      <li>Enter jobs with hours, assignees, priorities, and due dates</li>
+      <li>Auto-calculate start and finish dates based on true capacity</li>
+      <li>Track overtime risk, offset capacity, and delivery health</li>
+      <li>Save and reload datasets from Supabase cloud</li>
+      <li>Sync Microsoft calendar busy time into unavailable hours</li>
+    </ul>
+
+    <h2>3. First-Time Setup</h2>
+    <h3>3.1 Login</h3>
+    <p>Enter your assigned app password on the login screen.</p>
+
+    <h3>3.2 Team table (left sidebar)</h3>
+    <ol>
+      <li>Add each team member in <strong>Member</strong>.</li>
+      <li>Set their standard <strong>Daily hours</strong>.</li>
+      <li>Keep names consistent (this links jobs, staff pages, and outputs).</li>
+    </ol>
+
+    <h3>3.3 Add jobs (Team dashboard)</h3>
+    <ol>
+      <li>Add one row per job in <strong>All jobs input</strong>.</li>
+      <li>Set <strong>Priority</strong>:
+        <ul>
+          <li><code>1+</code> = active work</li>
+          <li><code>0</code> = on hold backlog</li>
+        </ul>
+      </li>
+      <li>Add due dates where delivery tracking is needed.</li>
+    </ol>
+
+    <div class="callout">
+      Priority handling is sequential per assignee. If you set another job to priority 1, the list reorders to stay consistent.
+    </div>
+
+    <h2>4. Daily Workflow (Recommended)</h2>
+    <ol>
+      <li>Update team daily hours only when needed.</li>
+      <li>Update jobs (hours, priority, due date, notes).</li>
+      <li>Open <strong>Staff pages</strong> and update non-working/unavailable days.</li>
+      <li>If using Outlook sync, refresh snapshot.</li>
+      <li>Review <strong>Schedule output</strong> KPIs and delivery health.</li>
+      <li>Save to cloud.</li>
+    </ol>
+
+    <div class="page-break"></div>
+
+    <h2>5. Team Dashboard</h2>
+    <h3>5.1 All jobs input</h3>
+    <p>This table is your main planning queue across all staff.</p>
+    <ul>
+      <li><strong>Job name</strong>: unique task label</li>
+      <li><strong>Required hours</strong>: total hours to complete</li>
+      <li><strong>Priority</strong>: execution order per assignee</li>
+      <li><strong>Assignee</strong>: team member responsible</li>
+      <li><strong>Due date</strong>: target completion date</li>
+      <li><strong>Notes</strong>: context, blockers, comments</li>
+    </ul>
+
+    <h3>5.2 Schedule output cards</h3>
+    <div class="kpi-grid">
+      <div class="kpi"><strong>Offset before first overtime (hrs)</strong><br />Free support capacity from other members before the first overdue due date.</div>
+      <div class="kpi"><strong>Offset capacity (hrs)</strong><br />Total support capacity from other members before all overdue due dates.</div>
+      <div class="kpi"><strong>Overtime needed (hrs)</strong><br />Additional hours required to still meet due dates.</div>
+      <div class="kpi"><strong>On-time jobs %</strong><br />Share of due-dated active jobs projected on time.</div>
+    </div>
+
+    <h3>5.3 Delivery health states</h3>
+    <p>
+      <span class="status healthy">Healthy</span>
+      No overtime required.
+    </p>
+    <p>
+      <span class="status early">Early warning</span>
+      Overtime exists but still below both offset values (rebalancing advised).
+    </p>
+    <p>
+      <span class="status warning">Warning</span>
+      Overtime exceeds offset before first overtime due date.
+    </p>
+    <p>
+      <span class="status critical">Critical</span>
+      Overtime exceeds both short-term and total offset capacity.
+    </p>
+
+    <h2>6. Staff Pages</h2>
+    <h3>6.1 What to manage here</h3>
+    <ul>
+      <li>Schedule start date</li>
+      <li>Working weekdays</li>
+      <li>Non-working days</li>
+      <li>Partial unavailable hours</li>
+      <li>Jobs for the selected staff member</li>
+    </ul>
+
+    <h3>6.2 Calendar controls</h3>
+    <table>
+      <thead>
+        <tr><th>Action</th><th>Effect</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Mark non-working</td><td>Removes all project capacity for that date (same as leave/shutdown).</td></tr>
+        <tr><td>Mark working</td><td>Clears non-working and manual unavailable hours for that date.</td></tr>
+        <tr><td>Mark unavailable</td><td>Reduces that day capacity by selected hours.</td></tr>
+      </tbody>
+    </table>
+
+    <p class="small">Important: total unavailable used by scheduling = manual unavailable + calendar snapshot unavailable (capped at daily hours).</p>
+
+    <h3>6.3 Staff jobs table</h3>
+    <p>Shows selected member's projected start/finish dates after calendar constraints are applied.</p>
+
+    <h2>7. Availability Page</h2>
+    <p>Use this page to inspect free hours and job split by day.</p>
+    <ul>
+      <li><strong>Mode: Active only</strong> -> only priority 1+ jobs</li>
+      <li><strong>Mode: Active plus on hold backlog</strong> -> includes priority 0 backlog after active work</li>
+      <li>Use month arrows to move through future months</li>
+      <li>Cells show free hours and job-hour details</li>
+    </ul>
+
+    <div class="page-break"></div>
+
+    <h2>8. Cloud Sync</h2>
+    <h3>Buttons</h3>
+    <ul>
+      <li><strong>Save to cloud</strong> -> writes current dataset snapshot to Supabase</li>
+      <li><strong>Reload from cloud</strong> -> replaces local state with cloud snapshot</li>
+      <li><strong>Refresh outputs</strong> -> refreshes data editors and computed views</li>
+    </ul>
+
+    <h3>Best practice</h3>
+    <ol>
+      <li>Save to cloud after meaningful updates.</li>
+      <li>Reload from cloud if multiple devices/users may edit the same dataset.</li>
+    </ol>
+
+    <h2>9. Microsoft Calendar Sync</h2>
+    <h3>What it does</h3>
+    <p>Imports busy meeting time from Outlook calendar and converts it to unavailable hours in the selected staff member's calendar.</p>
+
+    <h3>How to use</h3>
+    <ol>
+      <li>In sidebar, choose <strong>Snapshot member</strong>.</li>
+      <li>Click <strong>Link calander</strong> and sign in with Microsoft.</li>
+      <li>Return to app and click <strong>Refresh calander snapshot</strong>.</li>
+      <li>Confirm status message and re-check staffing outputs.</li>
+    </ol>
+
+    <h3>Permissions used</h3>
+    <ul>
+      <li><code>Calendars.Read</code> (read calendar events)</li>
+      <li><code>User.Read</code> (profile identity)</li>
+      <li><code>offline_access</code> (refresh tokens for later refresh)</li>
+    </ul>
+
+    <div class="callout">
+      Calendar sync writes to <em>calendar unavailable hours</em>. Manual unavailable hours are still editable independently.
+    </div>
+
+    <h2>10. KPI Glossary</h2>
+    <table>
+      <thead>
+        <tr><th>KPI</th><th>Plain-English meaning</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Offset before first overtime (hrs)</td><td>How many helper hours are available before the first due-date breach.</td></tr>
+        <tr><td>Offset capacity (hrs)</td><td>Total helper hours available before all due-date breaches.</td></tr>
+        <tr><td>Overtime needed (hrs)</td><td>Hours still required on top of planned capacity to hit due dates.</td></tr>
+        <tr><td>On-time jobs %</td><td>Percentage of due-dated active jobs projected to complete on/before due date.</td></tr>
+        <tr><td>Delivery health</td><td>Traffic-light status combining overtime demand and available offset capacity.</td></tr>
+      </tbody>
+    </table>
+
+    <h2>11. Troubleshooting</h2>
+    <table>
+      <thead>
+        <tr><th>Issue</th><th>Likely cause</th><th>Fix</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Cloud save/load error 404 for <code>app_state</code></td>
+          <td>Supabase table or policy missing</td>
+          <td>Run the app_state table + RLS policy SQL in Supabase.</td>
+        </tr>
+        <tr>
+          <td>Link calander fails immediately</td>
+          <td>Missing or wrong Microsoft secrets</td>
+          <td>Check <code>MS_CLIENT_ID</code> and <code>MS_REDIRECT_URI</code> and Entra redirect URI match exactly.</td>
+        </tr>
+        <tr>
+          <td>Snapshot refresh fails after login</td>
+          <td>Token or permission problem</td>
+          <td>Re-link calendar and verify Graph scopes include <code>Calendars.Read</code>.</td>
+        </tr>
+        <tr>
+          <td>Schedule not updating as expected</td>
+          <td>Editor cache/view lag</td>
+          <td>Use <strong>Refresh outputs</strong>, then verify staff-level non-working/unavailable settings.</td>
+        </tr>
+        <tr>
+          <td>Unexpected overtime spike</td>
+          <td>Due date pressure or reduced capacity</td>
+          <td>Check due dates, priorities, non-working days, and unavailable hours by assignee.</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2>12. Admin Notes</h2>
+    <ul>
+      <li>Keep team member names stable to avoid assignment mismatch.</li>
+      <li>Use due dates on active jobs to make delivery health meaningful.</li>
+      <li>For demos: save cloud state before closing so restart looks correct.</li>
+      <li>Review calendar snapshot member before refresh to avoid writing hours to wrong person.</li>
+    </ul>
+
+    <div class="footer">
+      Hydraulic Resourcing App User Manual | Prepared in-project for onboarding and handover use.
+    </div>
+  </main>
+</body>
+</html>

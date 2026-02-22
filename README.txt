@@ -4,6 +4,11 @@ Run locally
 3 Run pip3 install -r requirements.txt
 4 Run streamlit run app.py
 
+User manual
+1 Styled manual HTML: docs/hydraulic_resourcing_user_manual.html
+2 Editable markdown: docs/hydraulic_resourcing_user_manual.md
+3 To export PDF: open the HTML in a browser, then Print > Save as PDF
+
 Login
 1 This app uses a simple password gate
 2 For local runs, edit .streamlit/secrets.toml and set APP_PASSWORD

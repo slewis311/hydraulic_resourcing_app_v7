@@ -4,17 +4,103 @@ from bisect import bisect_right
 import base64
 import hashlib
 import secrets as pysecrets
+from pathlib import Path
 from zoneinfo import ZoneInfo
 from urllib.parse import urlencode
 
 PRIMARY_DATASET_ID = "main"
 SECONDARY_DATASET_ID = "scott"
+MANUAL_QUERY_KEY = "manual"
+MANUAL_MARKDOWN_PATH = Path(__file__).resolve().parent / "docs" / "hydraulic_resourcing_user_manual.md"
+
+def _query_param_str(key: str) -> str:
+    try:
+        value = st.query_params.get(key, "")
+    except Exception:
+        return ""
+    if isinstance(value, list):
+        if len(value) == 0:
+            return ""
+        return str(value[0]).strip()
+    return str(value).strip()
+
+def is_manual_mode() -> bool:
+    return _query_param_str(MANUAL_QUERY_KEY).lower() in {"1", "true", "yes"}
+
+def set_manual_mode(enabled: bool) -> None:
+    if enabled:
+        st.query_params[MANUAL_QUERY_KEY] = "1"
+    else:
+        if MANUAL_QUERY_KEY in st.query_params:
+            del st.query_params[MANUAL_QUERY_KEY]
+
+def render_quickstart_manual_page() -> None:
+    st.markdown(
+        '''
+        <style>
+          .manual-hero {
+            background: linear-gradient(135deg, #167f99, #24a7b3 55%, #59c0c9);
+            border: 1px solid rgba(255,255,255,0.35);
+            border-radius: 16px;
+            padding: 18px 20px;
+            margin-bottom: 0.8rem;
+            color: #f7fcff;
+            box-shadow: 0 14px 30px rgba(22, 92, 113, 0.24);
+            position: relative;
+            overflow: hidden;
+          }
+          .manual-hero::after {
+            content: "";
+            position: absolute;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            height: 4px;
+            background: linear-gradient(90deg, #efe73f, rgba(239,231,63,0.2));
+          }
+          .manual-title {
+            font-family: "Manrope", sans-serif;
+            font-size: 1.8rem;
+            font-weight: 800;
+            margin-bottom: 0.1rem;
+          }
+          .manual-sub {
+            color: rgba(240, 249, 252, 0.96);
+            margin: 0;
+          }
+        </style>
+        ''',
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        '<div class="manual-hero"><div class="manual-title">Quickstart Manual</div><p class="manual-sub">Hydraulic Resourcing App setup and user guide</p></div>',
+        unsafe_allow_html=True,
+    )
+
+    label = "Back to app" if bool(st.session_state.get("authenticated", False)) else "Back to sign in"
+    c1, c2 = st.columns([1.2, 4.2])
+    with c1:
+        if st.button(label, use_container_width=True, key="manual_back_btn"):
+            set_manual_mode(False)
+            st.rerun()
+    with c2:
+        st.caption("Tip: Use browser Print -> Save as PDF for a shareable copy.")
+
+    if MANUAL_MARKDOWN_PATH.exists():
+        manual_text = MANUAL_MARKDOWN_PATH.read_text(encoding="utf-8")
+        st.markdown(manual_text)
+    else:
+        st.error(f"Manual file not found: {MANUAL_MARKDOWN_PATH}")
 
 def require_login():
     st.set_page_config(page_title="Hydraulic Resourcing App", layout="wide")
 
     if "authenticated" not in st.session_state:
         st.session_state["authenticated"] = False
+
+    if is_manual_mode():
+        render_quickstart_manual_page()
+        st.stop()
 
     if st.session_state["authenticated"]:
         if "state_dataset_id" not in st.session_state:
@@ -98,9 +184,13 @@ def require_login():
     with center_col:
         st.markdown('<div class="login-hero"><div class="login-title">Hydraulic Resourcing App</div><div class="login-sub">Admin login required</div></div>', unsafe_allow_html=True)
         pwd = st.text_input("Password", type="password")
-        col1, _ = st.columns([1, 1.4])
+        col1, col2 = st.columns([1, 1.4])
         with col1:
             sign_in = st.button("Sign in", use_container_width=True)
+        with col2:
+            if st.button("Quickstart manual", use_container_width=True):
+                set_manual_mode(True)
+                st.rerun()
 
     if sign_in:
         primary_pwd = st.secrets.get("APP_PASSWORD", "")
@@ -1060,17 +1150,6 @@ def _fetch_graph_identity(access_token: str) -> str:
     upn = str(data.get("userPrincipalName", "")).strip()
     return mail or upn
 
-def _query_param_str(key: str) -> str:
-    try:
-        value = st.query_params.get(key, "")
-    except Exception:
-        return ""
-    if isinstance(value, list):
-        if len(value) == 0:
-            return ""
-        return str(value[0]).strip()
-    return str(value).strip()
-
 def _clear_oauth_query_params() -> None:
     for k in ["code", "state", "error", "error_description", "session_state"]:
         if k in st.query_params:
@@ -1851,6 +1930,12 @@ with st.sidebar:
         st.caption(f"Linked: {linked_email}")
     if "calendar_sync_message" in st.session_state:
         st.caption(f"Status: {st.session_state['calendar_sync_message']}")
+
+    st.divider()
+    st.subheader("Quickstart manual")
+    if st.button("Open quickstart manual", key="open_quickstart_manual_sidebar", use_container_width=True):
+        set_manual_mode(True)
+        st.rerun()
 
 team_members = team_df["Member"].astype(str).tolist() if not team_df.empty else []
 member_hours = {row["Member"]: float(row["Daily hours"]) for _, row in team_df.iterrows()} if not team_df.empty else {}
