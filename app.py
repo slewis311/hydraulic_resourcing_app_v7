@@ -175,6 +175,18 @@ def require_login():
             border-color: #24a7b3;
             box-shadow: 0 6px 16px rgba(31,126,151,0.16);
           }
+          header[data-testid="stHeader"],
+          div[data-testid="stToolbar"],
+          div[data-testid="stDecoration"],
+          div[data-testid="stStatusWidget"],
+          div[data-testid="stAppDeployButton"],
+          #MainMenu,
+          footer {
+            visibility: hidden !important;
+            height: 0 !important;
+            min-height: 0 !important;
+            display: none !important;
+          }
         </style>
         ''',
         unsafe_allow_html=True
@@ -596,6 +608,18 @@ st.markdown(
       }
       .stButton > button:hover {
         box-shadow: 0 6px 16px rgba(31,126,151,0.16);
+      }
+      header[data-testid="stHeader"],
+      div[data-testid="stToolbar"],
+      div[data-testid="stDecoration"],
+      div[data-testid="stStatusWidget"],
+      div[data-testid="stAppDeployButton"],
+      #MainMenu,
+      footer {
+        visibility: hidden !important;
+        height: 0 !important;
+        min-height: 0 !important;
+        display: none !important;
       }
       @media (max-width: 900px) {
         .block-container { padding-top: 4.4rem; }
