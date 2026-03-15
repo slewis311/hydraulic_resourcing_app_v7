@@ -9,7 +9,8 @@ from zoneinfo import ZoneInfo
 from urllib.parse import urlencode
 
 PRIMARY_DATASET_ID = "main"
-SECONDARY_DATASET_ID = "scott"
+SECONDARY_DATASET_ID = "hydraulics"
+LEGACY_SECONDARY_DATASET_ID = "scott"
 MANUAL_QUERY_KEY = "manual"
 MANUAL_MARKDOWN_PATH = Path(__file__).resolve().parent / "docs" / "hydraulic_resourcing_user_manual.md"
 
@@ -206,13 +207,14 @@ def require_login():
 
     if sign_in:
         primary_pwd = st.secrets.get("APP_PASSWORD", "")
-        secondary_pwd = st.secrets.get("APP_PASSWORD_SCOTT", "scott")
+        secondary_pwd = st.secrets.get("APP_PASSWORD_HYDRAULICS", "hydraulics")
+        secondary_pwd_legacy = st.secrets.get("APP_PASSWORD_SCOTT", "")
         if primary_pwd and pwd == primary_pwd:
             st.session_state["authenticated"] = True
             st.session_state["state_dataset_id"] = PRIMARY_DATASET_ID
             st.session_state["login_profile"] = "primary"
             st.rerun()
-        elif secondary_pwd and pwd == secondary_pwd:
+        elif (secondary_pwd and pwd == secondary_pwd) or (secondary_pwd_legacy and pwd == secondary_pwd_legacy):
             st.session_state["authenticated"] = True
             st.session_state["state_dataset_id"] = SECONDARY_DATASET_ID
             st.session_state["login_profile"] = "secondary"
@@ -1025,6 +1027,15 @@ def fetch_state_from_cloud() -> tuple[dict | None, str]:
         if resp.status_code >= 400:
             return None, f"Cloud load failed ({resp.status_code}): {resp.text[:180]}"
         rows = resp.json()
+        if not rows and state_id == SECONDARY_DATASET_ID:
+            legacy_params = {"select": "payload", "id": f"eq.{LEGACY_SECONDARY_DATASET_ID}", "limit": "1"}
+            legacy_resp = requests.get(endpoint, headers=headers, params=legacy_params, timeout=12)
+            if legacy_resp.status_code < 400:
+                legacy_rows = legacy_resp.json()
+                if legacy_rows:
+                    payload = legacy_rows[0].get("payload")
+                    if isinstance(payload, dict):
+                        return payload, f"Legacy cloud snapshot loaded (dataset: {LEGACY_SECONDARY_DATASET_ID})."
         if not rows:
             return None, f"No cloud snapshot found yet (dataset: {state_id})."
         payload = rows[0].get("payload")
@@ -1661,8 +1672,8 @@ def ensure_member_settings(members: list[str]) -> None:
             ms[m]["weekdays"] = {0, 1, 2, 3, 4}
         if "leave_dates" not in ms[m]:
             ms[m]["leave_dates"] = []
-        if "start_date" not in ms[m]:
-            ms[m]["start_date"] = date.today()
+        # Schedule start is always the current day.
+        ms[m]["start_date"] = date.today()
         if "unavailable_hours" not in ms[m] or not isinstance(ms[m]["unavailable_hours"], dict):
             ms[m]["unavailable_hours"] = {}
         if "calendar_unavailable_hours" not in ms[m] or not isinstance(ms[m]["calendar_unavailable_hours"], dict):
@@ -2035,7 +2046,7 @@ with tabs[0]:
         non_working = set(ms["leave_dates"])
         daily_hours = float(member_hours.get(member, 8.0))
         unavailable_hours = get_effective_unavailable_hours(ms, daily_hours)
-        sdate = ms.get("start_date", date.today())
+        sdate = date.today()
         member_working_cfg[member] = {
             "capacity_days": build_capacity_days(
                 sdate,
@@ -2138,7 +2149,7 @@ with tabs[0]:
             cfg = member_working_cfg.get(member, {})
             weekdays = cfg.get("weekdays", st.session_state["member_settings"][member]["weekdays"])
             non_working = set(cfg.get("non_working", set(st.session_state["member_settings"][member]["leave_dates"])))
-            sdate = cfg.get("sdate", st.session_state["member_settings"][member].get("start_date", date.today()))
+            sdate = cfg.get("sdate", date.today())
             daily_hours = float(cfg.get("daily_hours", member_hours.get(member, 8.0)))
             unavailable_hours = cfg.get(
                 "unavailable_hours",
@@ -2263,12 +2274,7 @@ with tabs[1]:
 
     with left:
         st.write("Calendar")
-
-        s_key = f"start_{selected_member}"
-        if s_key not in st.session_state:
-            st.session_state[s_key] = st.session_state["member_settings"][selected_member].get("start_date", date.today())
-        sdate = st.date_input("Schedule start date", value=st.session_state[s_key], key=s_key)
-        st.session_state["member_settings"][selected_member]["start_date"] = sdate
+        st.session_state["member_settings"][selected_member]["start_date"] = date.today()
 
         weekday_labels = [INT_TO_LABEL[i] for i in sorted(list(st.session_state["member_settings"][selected_member]["weekdays"]))]
         chosen = st.multiselect(
@@ -2454,7 +2460,7 @@ with tabs[1]:
         if not active.empty:
             sched = schedule_member_jobs(
                 active,
-                ms.get("start_date", date.today()),
+                date.today(),
                 daily_hours,
                 weekdays,
                 non_working,
@@ -2492,7 +2498,7 @@ with tabs[2]:
         non_working = set(ms["leave_dates"])
         daily_hours = float(member_hours.get(member, 8.0))
         unavailable_hours = get_effective_unavailable_hours(ms, daily_hours)
-        sdate = ms.get("start_date", date.today())
+        sdate = date.today()
 
         member_jobs = jobs_norm[jobs_norm["Assignee"] == member].copy()
         active = member_jobs[member_jobs["Priority"] >= 1].copy()
