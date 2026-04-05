@@ -1043,6 +1043,14 @@ def fetch_state_from_cloud() -> tuple[dict | None, str]:
             return None, "Cloud payload is invalid."
         return payload, f"Cloud snapshot loaded (dataset: {state_id})."
     except Exception as exc:
+        msg = str(exc)
+        if "NameResolutionError" in msg or "Failed to resolve" in msg:
+            return (
+                None,
+                "Cloud load failed: unable to resolve SUPABASE_URL host. "
+                "Check SUPABASE_URL in Streamlit secrets (copy exact Project URL from Supabase Settings -> API) "
+                "and confirm the Supabase project is active.",
+            )
         return None, f"Cloud load failed: {exc}"
 
 def save_state_to_cloud() -> tuple[bool, str]:
@@ -1064,6 +1072,14 @@ def save_state_to_cloud() -> tuple[bool, str]:
             return False, f"Cloud save failed ({resp.status_code}): {resp.text[:180]}"
         return True, f"Saved to cloud (dataset: {state_id})."
     except Exception as exc:
+        msg = str(exc)
+        if "NameResolutionError" in msg or "Failed to resolve" in msg:
+            return (
+                False,
+                "Cloud save failed: unable to resolve SUPABASE_URL host. "
+                "Check SUPABASE_URL in Streamlit secrets (copy exact Project URL from Supabase Settings -> API) "
+                "and confirm the Supabase project is active.",
+            )
         return False, f"Cloud save failed: {exc}"
 
 def _graph_parse_datetime(dt_obj: dict | None) -> datetime | None:
@@ -2297,7 +2313,6 @@ with tabs[1]:
         with nav_l:
             if st.button("◀", key=f"leave_prev_{selected_member}", use_container_width=True):
                 st.session_state[leave_month_key] = add_months(st.session_state[leave_month_key], -1)
-                st.rerun()
         with nav_c:
             st.markdown(
                 f"<div class='cal-nav'>{st.session_state[leave_month_key].strftime('%B %Y')}</div>",
@@ -2306,7 +2321,6 @@ with tabs[1]:
         with nav_r:
             if st.button("▶", key=f"leave_next_{selected_member}", use_container_width=True):
                 st.session_state[leave_month_key] = add_months(st.session_state[leave_month_key], 1)
-                st.rerun()
 
         leave_set = set()
         for d in st.session_state["member_settings"][selected_member]["leave_dates"]:
@@ -2353,7 +2367,6 @@ with tabs[1]:
                     del manual_unavailable_map[picked_date]
                 st.session_state["member_settings"][selected_member]["leave_dates"] = sorted(list(leave_set))
                 st.session_state["member_settings"][selected_member]["unavailable_hours"] = manual_unavailable_map
-                st.rerun()
         with act2:
             if st.button("Mark working", key=f"leave_mark_on_{selected_member}", use_container_width=True):
                 if picked_date in leave_set:
@@ -2362,7 +2375,6 @@ with tabs[1]:
                     del manual_unavailable_map[picked_date]
                 st.session_state["member_settings"][selected_member]["leave_dates"] = sorted(list(leave_set))
                 st.session_state["member_settings"][selected_member]["unavailable_hours"] = manual_unavailable_map
-                st.rerun()
         with act3:
             if st.button("Mark unavailable", key=f"leave_mark_unavailable_{selected_member}", use_container_width=True):
                 if picked_date in leave_set:
@@ -2374,7 +2386,6 @@ with tabs[1]:
                     manual_unavailable_map[picked_date] = float(unavail_hours)
                 st.session_state["member_settings"][selected_member]["leave_dates"] = sorted(list(leave_set))
                 st.session_state["member_settings"][selected_member]["unavailable_hours"] = manual_unavailable_map
-                st.rerun()
 
         st.caption("Use buttons to mark full non-working days, clear to working, or set partial unavailable hours.")
         st.markdown('</div>', unsafe_allow_html=True)
