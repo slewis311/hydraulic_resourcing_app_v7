@@ -864,7 +864,7 @@ def init_local_state_if_missing() -> None:
     if "team" not in st.session_state:
         st.session_state["team"] = pd.DataFrame(DEFAULT_TEAM_ROWS)
     if "jobs_raw" not in st.session_state:
-        st.session_state["jobs_raw"] = pd.DataFrame(DEFAULT_JOBS_ROWS)
+        st.session_state["jobs_raw"] = prepare_jobs_editor_df(pd.DataFrame(DEFAULT_JOBS_ROWS))
     if "member_settings" not in st.session_state:
         members = st.session_state["team"]["Member"].astype(str).tolist()
         st.session_state["member_settings"] = _default_member_settings(members)
@@ -945,9 +945,7 @@ def apply_state_payload(payload: dict) -> None:
     st.session_state["team"] = team_df
 
     jobs_df = pd.DataFrame(payload.get("jobs_raw", DEFAULT_JOBS_ROWS))
-    if "Due date" in jobs_df.columns:
-        jobs_df["Due date"] = pd.to_datetime(jobs_df["Due date"], errors="coerce").dt.date
-    st.session_state["jobs_raw"] = clean_jobs_df(jobs_df)
+    st.session_state["jobs_raw"] = prepare_jobs_editor_df(jobs_df)
 
     members = team_df["Member"].astype(str).tolist()
     defaults = _default_member_settings(members)
@@ -1698,18 +1696,117 @@ def ensure_member_settings(members: list[str]) -> None:
         if m not in members:
             del ms[m]
 
-def clean_jobs_df(df: pd.DataFrame) -> pd.DataFrame:
+def prepare_jobs_editor_df(df: pd.DataFrame) -> pd.DataFrame:
     if df is None or not isinstance(df, pd.DataFrame) or df.empty:
         return pd.DataFrame(columns=JOB_COLS)
 
-    df = df.copy()
+    out = df.copy()
     for c in JOB_COLS:
-        if c not in df.columns:
-            df[c] = None
-    df = df[JOB_COLS]
+        if c not in out.columns:
+            out[c] = None
+    out = out[JOB_COLS].reset_index(drop=True)
+
+    for c in ["Job name", "Assignee", "Notes"]:
+        out[c] = out[c].where(pd.notna(out[c]), None)
+    out["Required hours"] = pd.to_numeric(out["Required hours"], errors="coerce")
+    out["Priority"] = pd.to_numeric(out["Priority"], errors="coerce")
+    due_dates = pd.to_datetime(out["Due date"], errors="coerce").dt.date
+    out["Due date"] = due_dates.where(pd.notna(due_dates), None)
+    return out
+
+def _job_row_has_content(row: dict, include_assignee: bool = True) -> bool:
+    text_cols = ["Job name", "Notes"]
+    if include_assignee:
+        text_cols.append("Assignee")
+    for c in text_cols:
+        if str(row.get(c, "") or "").strip():
+            return True
+    for c in ["Required hours", "Priority", "Due date"]:
+        value = row.get(c)
+        if value is not None and not pd.isna(value):
+            return True
+    return False
+
+def _job_row_is_schedulable(row: dict) -> bool:
+    job_name = str(row.get("Job name", "") or "").strip()
+    assignee = str(row.get("Assignee", "") or "").strip()
+    if len(job_name) == 0 or len(assignee) == 0:
+        return False
+
+    req = pd.to_numeric(pd.Series([row.get("Required hours")]), errors="coerce").iloc[0]
+    priority = pd.to_numeric(pd.Series([row.get("Priority")]), errors="coerce").iloc[0]
+    if pd.isna(req) or float(req) < 0:
+        return False
+    if pd.isna(priority):
+        return False
+    return True
+
+def force_assignee_on_populated_rows(df: pd.DataFrame, assignee: str) -> pd.DataFrame:
+    out = prepare_jobs_editor_df(df)
+    if out.empty:
+        return out
+
+    records = []
+    for row in out.to_dict(orient="records"):
+        if _job_row_has_content(row, include_assignee=False):
+            row["Assignee"] = assignee
+        records.append(row)
+    return prepare_jobs_editor_df(pd.DataFrame(records, columns=JOB_COLS))
+
+def normalize_jobs_editor_rows(df: pd.DataFrame) -> pd.DataFrame:
+    prepared = prepare_jobs_editor_df(df)
+    if prepared.empty:
+        return prepared
+
+    schedulable_rows = []
+    draft_rows = []
+    for row in prepared.to_dict(orient="records"):
+        if not _job_row_has_content(row):
+            continue
+        if _job_row_is_schedulable(row):
+            schedulable_rows.append(row)
+        else:
+            draft_rows.append(row)
+
+    frames = []
+    if len(schedulable_rows) > 0:
+        schedulable_df = clean_jobs_df(pd.DataFrame(schedulable_rows, columns=JOB_COLS))
+        schedulable_df = normalize_active_priorities(schedulable_df)
+        if not schedulable_df.empty:
+            frames.append(schedulable_df[JOB_COLS])
+    if len(draft_rows) > 0:
+        frames.append(prepare_jobs_editor_df(pd.DataFrame(draft_rows, columns=JOB_COLS)))
+
+    if len(frames) == 0:
+        return pd.DataFrame(columns=JOB_COLS)
+    return prepare_jobs_editor_df(pd.concat(frames, ignore_index=True))
+
+def jobs_editor_signature(df: pd.DataFrame) -> tuple:
+    out = prepare_jobs_editor_df(df)
+    rows = []
+    for row in out.to_dict(orient="records"):
+        due = _safe_date(row.get("Due date"))
+        req = row.get("Required hours")
+        priority = row.get("Priority")
+        rows.append(
+            (
+                str(row.get("Job name", "") or ""),
+                None if pd.isna(req) else float(req),
+                None if pd.isna(priority) else int(float(priority)),
+                str(row.get("Assignee", "") or ""),
+                None if due is None else due.isoformat(),
+                str(row.get("Notes", "") or ""),
+            )
+        )
+    return tuple(rows)
+
+def clean_jobs_df(df: pd.DataFrame) -> pd.DataFrame:
+    df = prepare_jobs_editor_df(df)
+    if df.empty:
+        return df
 
     df = df.dropna(subset=["Job name", "Required hours", "Priority", "Assignee"], how="any")
-    df = df[df["Job name"].astype(str).str.len() > 0]
+    df = df[df["Job name"].astype(str).str.strip().str.len() > 0]
 
     df["Required hours"] = pd.to_numeric(df["Required hours"], errors="coerce")
     df = df[df["Required hours"] >= 0]
@@ -1779,19 +1876,6 @@ def render_kpi(label: str, value: str, note: str) -> None:
         ),
         unsafe_allow_html=True,
     )
-
-def _priority_signature(df: pd.DataFrame) -> pd.DataFrame:
-    if df is None or not isinstance(df, pd.DataFrame) or df.empty:
-        return pd.DataFrame(columns=["Assignee", "Job name", "Priority"])
-    out = df.copy()
-    for c in ["Assignee", "Job name", "Priority"]:
-        if c not in out.columns:
-            out[c] = None
-    out = out[["Assignee", "Job name", "Priority"]].copy()
-    out["Assignee"] = out["Assignee"].astype(str)
-    out["Job name"] = out["Job name"].astype(str)
-    out["Priority"] = pd.to_numeric(out["Priority"], errors="coerce").fillna(0).astype(int)
-    return out.reset_index(drop=True)
 
 def render_capacity_calendar(alloc: pd.DataFrame, start: date, end: date, weekdays: set[int], day_jobs: dict[date, list[str]] | None = None):
     free_map = {}
@@ -1931,6 +2015,10 @@ with st.sidebar:
         st.session_state["cloud_sync_message"] = msg
         if payload is not None:
             apply_state_payload(payload)
+            st.session_state.pop("jobs_editor", None)
+            staff_keys = [k for k in list(st.session_state.keys()) if str(k).startswith("member_jobs_editor_")]
+            for k in staff_keys:
+                st.session_state.pop(k, None)
             st.success(msg)
             st.rerun()
         else:
@@ -1997,9 +2085,15 @@ if len(team_members) == 0:
 
 ensure_member_settings(team_members)
 
-tabs = st.tabs(["Team dashboard", "Staff pages", "Availability"])
+active_view = st.radio(
+    "View",
+    options=["Team dashboard", "Staff pages", "Availability"],
+    horizontal=True,
+    label_visibility="collapsed",
+    key="active_view",
+)
 
-with tabs[0]:
+if active_view == "Team dashboard":
     st.markdown('<div class="section-title">Team dashboard</div>', unsafe_allow_html=True)
     st.subheader("All jobs input")
     st.caption("Priority 1 or higher means active, Priority 0 means on hold")
@@ -2023,8 +2117,9 @@ with tabs[0]:
         ),
         unsafe_allow_html=True,
     )
+    jobs_editor_df = prepare_jobs_editor_df(st.session_state.get("jobs_raw", pd.DataFrame(columns=JOB_COLS)))
     jobs_input = st.data_editor(
-        st.session_state["jobs_raw"],
+        jobs_editor_df,
         num_rows="dynamic",
         use_container_width=True,
         hide_index=True,
@@ -2040,13 +2135,24 @@ with tabs[0]:
     )
     st.markdown('</div>', unsafe_allow_html=True)
 
-    jobs_clean = clean_jobs_df(jobs_input)
+    jobs_input_prepared = prepare_jobs_editor_df(jobs_input)
+    jobs_live = normalize_jobs_editor_rows(jobs_input_prepared)
+    jobs_state_changed = jobs_editor_signature(jobs_live) != jobs_editor_signature(jobs_editor_df)
+    jobs_display_changed = jobs_editor_signature(jobs_live) != jobs_editor_signature(jobs_input_prepared)
+    if jobs_state_changed:
+        st.session_state["jobs_raw"] = jobs_live
+        staff_keys = [k for k in list(st.session_state.keys()) if str(k).startswith("member_jobs_editor_")]
+        for k in staff_keys:
+            st.session_state.pop(k, None)
+    else:
+        st.session_state["jobs_raw"] = jobs_live
+
+    jobs_clean = clean_jobs_df(st.session_state["jobs_raw"])
     jobs_norm = normalize_active_priorities(jobs_clean)
-    st.session_state["jobs_raw"] = jobs_norm
-    if not _priority_signature(jobs_norm).equals(_priority_signature(jobs_clean)):
+    jobs_norm = add_status_columns(jobs_norm)
+    if jobs_display_changed:
         st.session_state.pop("jobs_editor", None)
         st.rerun()
-    jobs_norm = add_status_columns(jobs_norm)
 
     st.divider()
     st.subheader("Schedule output")
@@ -2282,7 +2388,7 @@ with tabs[0]:
     csv_bytes = show.to_csv(index=False).encode("utf-8")
     st.download_button("Download schedule CSV", data=csv_bytes, file_name="hydraulic_resourcing_schedule.csv", mime="text/csv")
 
-with tabs[1]:
+if active_view == "Staff pages":
     st.markdown('<div class="section-title">Staff pages</div>', unsafe_allow_html=True)
     selected_member = st.selectbox("Select staff member", options=team_members, index=0)
 
@@ -2394,13 +2500,14 @@ with tabs[1]:
     with right:
         st.write("Jobs for selected staff member")
 
-        jobs_all = clean_jobs_df(st.session_state.get("jobs_raw", pd.DataFrame(columns=JOB_COLS)))
-        member_jobs = jobs_all[jobs_all["Assignee"] == selected_member].copy()
+        jobs_all_raw = prepare_jobs_editor_df(st.session_state.get("jobs_raw", pd.DataFrame(columns=JOB_COLS)))
+        member_jobs = jobs_all_raw[jobs_all_raw["Assignee"] == selected_member].copy()
         if member_jobs.empty:
             member_jobs = pd.DataFrame(columns=JOB_COLS)
-        active_count_staff = int((member_jobs["Priority"] >= 1).sum()) if not member_jobs.empty else 0
-        hold_count_staff = int((member_jobs["Priority"] == 0).sum()) if not member_jobs.empty else 0
-        total_count_staff = int(len(member_jobs))
+        member_jobs_clean = clean_jobs_df(member_jobs)
+        active_count_staff = int((member_jobs_clean["Priority"] >= 1).sum()) if not member_jobs_clean.empty else 0
+        hold_count_staff = int((member_jobs_clean["Priority"] == 0).sum()) if not member_jobs_clean.empty else 0
+        total_count_staff = int(len(member_jobs_clean))
 
         editor_key = f"member_jobs_editor_{selected_member}"
         st.markdown('<div class="table-shell">', unsafe_allow_html=True)
@@ -2434,23 +2541,19 @@ with tabs[1]:
         )
         st.markdown('</div>', unsafe_allow_html=True)
 
-        edited = clean_jobs_df(edited)
-        if not edited.empty:
-            edited["Assignee"] = selected_member
+        edited_prepared = force_assignee_on_populated_rows(edited, selected_member)
+        edited_live = normalize_jobs_editor_rows(edited_prepared)
+        member_state_changed = jobs_editor_signature(edited_live) != jobs_editor_signature(member_jobs)
+        member_display_changed = jobs_editor_signature(edited_live) != jobs_editor_signature(edited_prepared)
 
-        jobs_all = jobs_all[jobs_all["Assignee"] != selected_member].copy()
-        combined_clean = clean_jobs_df(pd.concat([jobs_all, edited], ignore_index=True))
-        combined_norm = normalize_active_priorities(combined_clean)
-        st.session_state["jobs_raw"] = combined_norm
-        selected_norm = combined_norm[combined_norm["Assignee"] == selected_member][JOB_COLS].reset_index(drop=True)
-        edited_cmp = edited[JOB_COLS].reset_index(drop=True)
-        selected_norm_cmp = clean_jobs_df(selected_norm).reset_index(drop=True)
-        edited_norm_cmp = clean_jobs_df(edited_cmp).reset_index(drop=True)
-        if len(selected_norm_cmp) == 0 and len(edited_norm_cmp) == 0:
-            pass
-        elif not _priority_signature(selected_norm_cmp).equals(_priority_signature(edited_norm_cmp)):
-            st.session_state.pop(editor_key, None)
-            st.rerun()
+        jobs_other_raw = jobs_all_raw[jobs_all_raw["Assignee"] != selected_member].copy()
+        combined_raw = prepare_jobs_editor_df(pd.concat([jobs_other_raw, edited_live], ignore_index=True))
+        st.session_state["jobs_raw"] = combined_raw
+        if member_state_changed:
+            st.session_state.pop("jobs_editor", None)
+            staff_keys = [k for k in list(st.session_state.keys()) if str(k).startswith("member_jobs_editor_") and str(k) != editor_key]
+            for k in staff_keys:
+                st.session_state.pop(k, None)
 
         ms = st.session_state["member_settings"][selected_member]
         weekdays = ms["weekdays"]
@@ -2458,8 +2561,11 @@ with tabs[1]:
         daily_hours = float(member_hours.get(selected_member, 8.0))
         unavailable_hours = get_effective_unavailable_hours(ms, daily_hours)
 
-        jobs_norm = normalize_active_priorities(clean_jobs_df(combined_norm))
+        jobs_norm = normalize_active_priorities(clean_jobs_df(combined_raw))
         jobs_norm = add_status_columns(jobs_norm)
+        if member_display_changed:
+            st.session_state.pop(editor_key, None)
+            st.rerun()
         member_norm = jobs_norm[jobs_norm["Assignee"] == selected_member].copy()
 
         active = member_norm[member_norm["Priority"] >= 1].copy()
@@ -2492,7 +2598,7 @@ with tabs[1]:
             st.dataframe(style_schedule(view), use_container_width=True)
             st.markdown('</div>', unsafe_allow_html=True)
 
-with tabs[2]:
+if active_view == "Availability":
     st.markdown('<div class="section-title">Availability</div>', unsafe_allow_html=True)
     st.caption("Next available date for active work, and next available date if on hold backlog is scheduled after active work")
 
