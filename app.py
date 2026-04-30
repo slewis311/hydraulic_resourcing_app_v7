@@ -864,7 +864,7 @@ def init_local_state_if_missing() -> None:
     if "team" not in st.session_state:
         st.session_state["team"] = pd.DataFrame(DEFAULT_TEAM_ROWS)
     if "jobs_raw" not in st.session_state:
-        st.session_state["jobs_raw"] = pd.DataFrame(DEFAULT_JOBS_ROWS)
+        st.session_state["jobs_raw"] = prepare_jobs_editor_df(pd.DataFrame(DEFAULT_JOBS_ROWS))
     if "member_settings" not in st.session_state:
         members = st.session_state["team"]["Member"].astype(str).tolist()
         st.session_state["member_settings"] = _default_member_settings(members)
@@ -945,9 +945,7 @@ def apply_state_payload(payload: dict) -> None:
     st.session_state["team"] = team_df
 
     jobs_df = pd.DataFrame(payload.get("jobs_raw", DEFAULT_JOBS_ROWS))
-    if "Due date" in jobs_df.columns:
-        jobs_df["Due date"] = pd.to_datetime(jobs_df["Due date"], errors="coerce").dt.date
-    st.session_state["jobs_raw"] = clean_jobs_df(jobs_df)
+    st.session_state["jobs_raw"] = prepare_jobs_editor_df(jobs_df)
 
     members = team_df["Member"].astype(str).tolist()
     defaults = _default_member_settings(members)
@@ -1698,18 +1696,31 @@ def ensure_member_settings(members: list[str]) -> None:
         if m not in members:
             del ms[m]
 
-def clean_jobs_df(df: pd.DataFrame) -> pd.DataFrame:
+def prepare_jobs_editor_df(df: pd.DataFrame) -> pd.DataFrame:
     if df is None or not isinstance(df, pd.DataFrame) or df.empty:
         return pd.DataFrame(columns=JOB_COLS)
 
-    df = df.copy()
+    out = df.copy()
     for c in JOB_COLS:
-        if c not in df.columns:
-            df[c] = None
-    df = df[JOB_COLS]
+        if c not in out.columns:
+            out[c] = None
+    out = out[JOB_COLS].reset_index(drop=True)
+
+    for c in ["Job name", "Assignee", "Notes"]:
+        out[c] = out[c].where(pd.notna(out[c]), None)
+    out["Required hours"] = pd.to_numeric(out["Required hours"], errors="coerce")
+    out["Priority"] = pd.to_numeric(out["Priority"], errors="coerce")
+    due_dates = pd.to_datetime(out["Due date"], errors="coerce").dt.date
+    out["Due date"] = due_dates.where(pd.notna(due_dates), None)
+    return out
+
+def clean_jobs_df(df: pd.DataFrame) -> pd.DataFrame:
+    df = prepare_jobs_editor_df(df)
+    if df.empty:
+        return df
 
     df = df.dropna(subset=["Job name", "Required hours", "Priority", "Assignee"], how="any")
-    df = df[df["Job name"].astype(str).str.len() > 0]
+    df = df[df["Job name"].astype(str).str.strip().str.len() > 0]
 
     df["Required hours"] = pd.to_numeric(df["Required hours"], errors="coerce")
     df = df[df["Required hours"] >= 0]
@@ -1779,19 +1790,6 @@ def render_kpi(label: str, value: str, note: str) -> None:
         ),
         unsafe_allow_html=True,
     )
-
-def _priority_signature(df: pd.DataFrame) -> pd.DataFrame:
-    if df is None or not isinstance(df, pd.DataFrame) or df.empty:
-        return pd.DataFrame(columns=["Assignee", "Job name", "Priority"])
-    out = df.copy()
-    for c in ["Assignee", "Job name", "Priority"]:
-        if c not in out.columns:
-            out[c] = None
-    out = out[["Assignee", "Job name", "Priority"]].copy()
-    out["Assignee"] = out["Assignee"].astype(str)
-    out["Job name"] = out["Job name"].astype(str)
-    out["Priority"] = pd.to_numeric(out["Priority"], errors="coerce").fillna(0).astype(int)
-    return out.reset_index(drop=True)
 
 def render_capacity_calendar(alloc: pd.DataFrame, start: date, end: date, weekdays: set[int], day_jobs: dict[date, list[str]] | None = None):
     free_map = {}
@@ -2024,7 +2022,7 @@ with tabs[0]:
         unsafe_allow_html=True,
     )
     jobs_input = st.data_editor(
-        st.session_state["jobs_raw"],
+        prepare_jobs_editor_df(st.session_state.get("jobs_raw", pd.DataFrame(columns=JOB_COLS))),
         num_rows="dynamic",
         use_container_width=True,
         hide_index=True,
@@ -2040,12 +2038,9 @@ with tabs[0]:
     )
     st.markdown('</div>', unsafe_allow_html=True)
 
-    jobs_clean = clean_jobs_df(jobs_input)
+    st.session_state["jobs_raw"] = prepare_jobs_editor_df(jobs_input)
+    jobs_clean = clean_jobs_df(st.session_state["jobs_raw"])
     jobs_norm = normalize_active_priorities(jobs_clean)
-    st.session_state["jobs_raw"] = jobs_norm
-    if not _priority_signature(jobs_norm).equals(_priority_signature(jobs_clean)):
-        st.session_state.pop("jobs_editor", None)
-        st.rerun()
     jobs_norm = add_status_columns(jobs_norm)
 
     st.divider()
@@ -2394,13 +2389,14 @@ with tabs[1]:
     with right:
         st.write("Jobs for selected staff member")
 
-        jobs_all = clean_jobs_df(st.session_state.get("jobs_raw", pd.DataFrame(columns=JOB_COLS)))
-        member_jobs = jobs_all[jobs_all["Assignee"] == selected_member].copy()
+        jobs_all_raw = prepare_jobs_editor_df(st.session_state.get("jobs_raw", pd.DataFrame(columns=JOB_COLS)))
+        member_jobs = jobs_all_raw[jobs_all_raw["Assignee"] == selected_member].copy()
         if member_jobs.empty:
             member_jobs = pd.DataFrame(columns=JOB_COLS)
-        active_count_staff = int((member_jobs["Priority"] >= 1).sum()) if not member_jobs.empty else 0
-        hold_count_staff = int((member_jobs["Priority"] == 0).sum()) if not member_jobs.empty else 0
-        total_count_staff = int(len(member_jobs))
+        member_jobs_clean = clean_jobs_df(member_jobs)
+        active_count_staff = int((member_jobs_clean["Priority"] >= 1).sum()) if not member_jobs_clean.empty else 0
+        hold_count_staff = int((member_jobs_clean["Priority"] == 0).sum()) if not member_jobs_clean.empty else 0
+        total_count_staff = int(len(member_jobs_clean))
 
         editor_key = f"member_jobs_editor_{selected_member}"
         st.markdown('<div class="table-shell">', unsafe_allow_html=True)
@@ -2434,23 +2430,13 @@ with tabs[1]:
         )
         st.markdown('</div>', unsafe_allow_html=True)
 
-        edited = clean_jobs_df(edited)
-        if not edited.empty:
-            edited["Assignee"] = selected_member
+        edited_raw = prepare_jobs_editor_df(edited)
+        if not edited_raw.empty:
+            edited_raw["Assignee"] = selected_member
 
-        jobs_all = jobs_all[jobs_all["Assignee"] != selected_member].copy()
-        combined_clean = clean_jobs_df(pd.concat([jobs_all, edited], ignore_index=True))
-        combined_norm = normalize_active_priorities(combined_clean)
-        st.session_state["jobs_raw"] = combined_norm
-        selected_norm = combined_norm[combined_norm["Assignee"] == selected_member][JOB_COLS].reset_index(drop=True)
-        edited_cmp = edited[JOB_COLS].reset_index(drop=True)
-        selected_norm_cmp = clean_jobs_df(selected_norm).reset_index(drop=True)
-        edited_norm_cmp = clean_jobs_df(edited_cmp).reset_index(drop=True)
-        if len(selected_norm_cmp) == 0 and len(edited_norm_cmp) == 0:
-            pass
-        elif not _priority_signature(selected_norm_cmp).equals(_priority_signature(edited_norm_cmp)):
-            st.session_state.pop(editor_key, None)
-            st.rerun()
+        jobs_other_raw = jobs_all_raw[jobs_all_raw["Assignee"] != selected_member].copy()
+        combined_raw = prepare_jobs_editor_df(pd.concat([jobs_other_raw, edited_raw], ignore_index=True))
+        st.session_state["jobs_raw"] = combined_raw
 
         ms = st.session_state["member_settings"][selected_member]
         weekdays = ms["weekdays"]
@@ -2458,7 +2444,7 @@ with tabs[1]:
         daily_hours = float(member_hours.get(selected_member, 8.0))
         unavailable_hours = get_effective_unavailable_hours(ms, daily_hours)
 
-        jobs_norm = normalize_active_priorities(clean_jobs_df(combined_norm))
+        jobs_norm = normalize_active_priorities(clean_jobs_df(combined_raw))
         jobs_norm = add_status_columns(jobs_norm)
         member_norm = jobs_norm[jobs_norm["Assignee"] == selected_member].copy()
 
