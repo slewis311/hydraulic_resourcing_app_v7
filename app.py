@@ -370,21 +370,74 @@ st.markdown(
         transform: translateY(-1px);
         box-shadow: 0 6px 14px rgba(31,126,151,0.14);
       }
-      .stTabs [role="tablist"] { gap: 8px; border-bottom: none; }
-      .stTabs [role="tab"] {
-        background: rgba(255,255,255,0.7);
-        border: 1px solid rgba(18,38,48,0.08);
-        border-radius: 999px;
-        padding: 8px 14px;
+      div[data-testid="stRadio"] > label {
+        font-family: "Manrope", sans-serif;
+        font-size: 0.82rem;
+        font-weight: 800;
+        letter-spacing: 0.02em;
+        color: #315569;
+        margin-bottom: 0.42rem;
       }
-      .stTabs [aria-selected="true"] {
-        border-color: rgba(31,126,151,0.35);
+      div[data-testid="stRadio"] div[role="radiogroup"] {
+        display: inline-flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        padding: 6px;
+        max-width: 100%;
+        border-radius: 999px;
+        border: 1px solid rgba(31,126,151,0.16);
+        background: linear-gradient(135deg, rgba(255,255,255,0.9), rgba(230,243,247,0.82));
+        box-shadow:
+          0 10px 24px rgba(31,126,151,0.08),
+          0 0 0 1px rgba(255,255,255,0.55) inset;
+      }
+      div[data-testid="stRadio"] label[data-baseweb="radio"] {
+        margin: 0;
+        border-radius: 999px;
+        border: 1px solid transparent;
+        background: transparent;
+        transition: transform 140ms ease, box-shadow 140ms ease, border-color 140ms ease, background 140ms ease;
+      }
+      div[data-testid="stRadio"] label[data-baseweb="radio"] > div:first-of-type {
+        display: none;
+      }
+      div[data-testid="stRadio"] label[data-baseweb="radio"] > div:last-of-type {
+        padding: 8px 16px 7px 16px;
+      }
+      div[data-testid="stRadio"] label[data-baseweb="radio"] p {
+        margin: 0;
+        font-size: 0.96rem;
+        font-weight: 600;
+        color: #2c4554;
+      }
+      div[data-testid="stRadio"] label[data-baseweb="radio"]:hover {
+        background: rgba(255,255,255,0.88);
+        border-color: rgba(31,126,151,0.18);
+        transform: translateY(-1px);
+      }
+      div[data-testid="stRadio"] label[data-baseweb="radio"]:has(input:checked) {
+        border-color: rgba(31,126,151,0.34);
+        background: linear-gradient(135deg, rgba(255,255,255,0.98), rgba(239,231,63,0.22));
         box-shadow:
           0 0 0 2px rgba(239,231,63,0.45) inset,
-          0 8px 20px rgba(31,126,151,0.15);
+          0 8px 18px rgba(31,126,151,0.14);
+      }
+      div[data-testid="stRadio"] label[data-baseweb="radio"]:has(input:checked) p {
         color: var(--brand-dark);
-        font-weight: 700;
-        background: rgba(255,255,255,0.95);
+        font-weight: 800;
+      }
+      @media (max-width: 820px) {
+        div[data-testid="stRadio"] div[role="radiogroup"] {
+          width: 100%;
+          border-radius: 18px;
+        }
+        div[data-testid="stRadio"] label[data-baseweb="radio"] {
+          flex: 1 1 auto;
+        }
+        div[data-testid="stRadio"] label[data-baseweb="radio"] > div:last-of-type {
+          padding-left: 14px;
+          padding-right: 14px;
+        }
       }
       [data-testid="stDataFrame"] {
         border: 1px solid var(--line);
