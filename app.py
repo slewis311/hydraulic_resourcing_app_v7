@@ -1714,33 +1714,6 @@ def prepare_jobs_editor_df(df: pd.DataFrame) -> pd.DataFrame:
     out["Due date"] = due_dates.where(pd.notna(due_dates), None)
     return out
 
-def jobs_editor_source_signature(df: pd.DataFrame) -> str:
-    out = prepare_jobs_editor_df(df)
-    rows: list[tuple] = []
-    for row in out.to_dict(orient="records"):
-        due = _safe_date(row.get("Due date"))
-        req = row.get("Required hours")
-        prio = row.get("Priority")
-        rows.append(
-            (
-                str(row.get("Job name", "") or ""),
-                None if pd.isna(req) else float(req),
-                None if pd.isna(prio) else int(float(prio)),
-                str(row.get("Assignee", "") or ""),
-                None if due is None else due.isoformat(),
-                str(row.get("Notes", "") or ""),
-            )
-        )
-    payload = repr(rows).encode("utf-8")
-    return hashlib.sha1(payload).hexdigest()
-
-def reset_editor_state_if_source_changed(editor_key: str, df: pd.DataFrame) -> None:
-    source_sig_key = f"{editor_key}__source_sig"
-    source_sig = jobs_editor_source_signature(df)
-    if st.session_state.get(source_sig_key) != source_sig:
-        st.session_state.pop(editor_key, None)
-        st.session_state[source_sig_key] = source_sig
-
 def clean_jobs_df(df: pd.DataFrame) -> pd.DataFrame:
     df = prepare_jobs_editor_df(df)
     if df.empty:
@@ -1956,6 +1929,10 @@ with st.sidebar:
         st.session_state["cloud_sync_message"] = msg
         if payload is not None:
             apply_state_payload(payload)
+            st.session_state.pop("jobs_editor", None)
+            staff_keys = [k for k in list(st.session_state.keys()) if str(k).startswith("member_jobs_editor_")]
+            for k in staff_keys:
+                st.session_state.pop(k, None)
             st.success(msg)
             st.rerun()
         else:
@@ -2022,9 +1999,15 @@ if len(team_members) == 0:
 
 ensure_member_settings(team_members)
 
-tabs = st.tabs(["Team dashboard", "Staff pages", "Availability"])
+active_view = st.radio(
+    "View",
+    options=["Team dashboard", "Staff pages", "Availability"],
+    horizontal=True,
+    label_visibility="collapsed",
+    key="active_view",
+)
 
-with tabs[0]:
+if active_view == "Team dashboard":
     st.markdown('<div class="section-title">Team dashboard</div>', unsafe_allow_html=True)
     st.subheader("All jobs input")
     st.caption("Priority 1 or higher means active, Priority 0 means on hold")
@@ -2049,25 +2032,31 @@ with tabs[0]:
         unsafe_allow_html=True,
     )
     jobs_editor_df = prepare_jobs_editor_df(st.session_state.get("jobs_raw", pd.DataFrame(columns=JOB_COLS)))
-    reset_editor_state_if_source_changed("jobs_editor", jobs_editor_df)
-    jobs_input = st.data_editor(
-        jobs_editor_df,
-        num_rows="dynamic",
-        use_container_width=True,
-        hide_index=True,
-        column_config={
-            "Job name": st.column_config.TextColumn(required=True),
-            "Required hours": st.column_config.NumberColumn(min_value=0.0, step=0.5, required=True),
-            "Priority": st.column_config.NumberColumn(min_value=0, step=1, required=True),
-            "Assignee": st.column_config.SelectboxColumn(options=team_members, required=True),
-            "Due date": st.column_config.DateColumn(required=False),
-            "Notes": st.column_config.TextColumn(required=False),
-        },
-        key="jobs_editor",
-    )
+    with st.form("jobs_editor_form", clear_on_submit=False):
+        jobs_input = st.data_editor(
+            jobs_editor_df,
+            num_rows="dynamic",
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Job name": st.column_config.TextColumn(required=True),
+                "Required hours": st.column_config.NumberColumn(min_value=0.0, step=0.5, required=True),
+                "Priority": st.column_config.NumberColumn(min_value=0, step=1, required=True),
+                "Assignee": st.column_config.SelectboxColumn(options=team_members, required=True),
+                "Due date": st.column_config.DateColumn(required=False),
+                "Notes": st.column_config.TextColumn(required=False),
+            },
+            key="jobs_editor",
+        )
+        apply_jobs_changes = st.form_submit_button("Apply work queue changes", use_container_width=True)
     st.markdown('</div>', unsafe_allow_html=True)
 
-    st.session_state["jobs_raw"] = prepare_jobs_editor_df(jobs_input)
+    if apply_jobs_changes:
+        st.session_state["jobs_raw"] = prepare_jobs_editor_df(jobs_input)
+        st.session_state.pop("jobs_editor", None)
+        staff_keys = [k for k in list(st.session_state.keys()) if str(k).startswith("member_jobs_editor_")]
+        for k in staff_keys:
+            st.session_state.pop(k, None)
     jobs_clean = clean_jobs_df(st.session_state["jobs_raw"])
     jobs_norm = normalize_active_priorities(jobs_clean)
     jobs_norm = add_status_columns(jobs_norm)
@@ -2306,7 +2295,7 @@ with tabs[0]:
     csv_bytes = show.to_csv(index=False).encode("utf-8")
     st.download_button("Download schedule CSV", data=csv_bytes, file_name="hydraulic_resourcing_schedule.csv", mime="text/csv")
 
-with tabs[1]:
+if active_view == "Staff pages":
     st.markdown('<div class="section-title">Staff pages</div>', unsafe_allow_html=True)
     selected_member = st.selectbox("Select staff member", options=team_members, index=0)
 
@@ -2428,7 +2417,6 @@ with tabs[1]:
         total_count_staff = int(len(member_jobs_clean))
 
         editor_key = f"member_jobs_editor_{selected_member}"
-        reset_editor_state_if_source_changed(editor_key, member_jobs)
         st.markdown('<div class="table-shell">', unsafe_allow_html=True)
         st.markdown(
             (
@@ -2443,30 +2431,38 @@ with tabs[1]:
             ),
             unsafe_allow_html=True,
         )
-        edited = st.data_editor(
-            member_jobs,
-            num_rows="dynamic",
-            use_container_width=True,
-            hide_index=True,
-            column_config={
-                "Job name": st.column_config.TextColumn(required=True),
-                "Required hours": st.column_config.NumberColumn(min_value=0.0, step=0.5, required=True),
-                "Priority": st.column_config.NumberColumn(min_value=0, step=1, required=True),
-                "Assignee": st.column_config.SelectboxColumn(options=[selected_member], required=True),
-                "Due date": st.column_config.DateColumn(required=False),
-                "Notes": st.column_config.TextColumn(required=False),
-            },
-            key=editor_key,
-        )
+        with st.form(f"{editor_key}_form", clear_on_submit=False):
+            edited = st.data_editor(
+                member_jobs,
+                num_rows="dynamic",
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "Job name": st.column_config.TextColumn(required=True),
+                    "Required hours": st.column_config.NumberColumn(min_value=0.0, step=0.5, required=True),
+                    "Priority": st.column_config.NumberColumn(min_value=0, step=1, required=True),
+                    "Assignee": st.column_config.SelectboxColumn(options=[selected_member], required=True),
+                    "Due date": st.column_config.DateColumn(required=False),
+                    "Notes": st.column_config.TextColumn(required=False),
+                },
+                key=editor_key,
+            )
+            apply_member_jobs_changes = st.form_submit_button(f"Apply {selected_member} queue changes", use_container_width=True)
         st.markdown('</div>', unsafe_allow_html=True)
 
-        edited_raw = prepare_jobs_editor_df(edited)
-        if not edited_raw.empty:
-            edited_raw["Assignee"] = selected_member
+        combined_raw = jobs_all_raw
+        if apply_member_jobs_changes:
+            edited_raw = prepare_jobs_editor_df(edited)
+            if not edited_raw.empty:
+                edited_raw["Assignee"] = selected_member
 
-        jobs_other_raw = jobs_all_raw[jobs_all_raw["Assignee"] != selected_member].copy()
-        combined_raw = prepare_jobs_editor_df(pd.concat([jobs_other_raw, edited_raw], ignore_index=True))
-        st.session_state["jobs_raw"] = combined_raw
+            jobs_other_raw = jobs_all_raw[jobs_all_raw["Assignee"] != selected_member].copy()
+            combined_raw = prepare_jobs_editor_df(pd.concat([jobs_other_raw, edited_raw], ignore_index=True))
+            st.session_state["jobs_raw"] = combined_raw
+            st.session_state.pop("jobs_editor", None)
+            staff_keys = [k for k in list(st.session_state.keys()) if str(k).startswith("member_jobs_editor_")]
+            for k in staff_keys:
+                st.session_state.pop(k, None)
 
         ms = st.session_state["member_settings"][selected_member]
         weekdays = ms["weekdays"]
@@ -2508,7 +2504,7 @@ with tabs[1]:
             st.dataframe(style_schedule(view), use_container_width=True)
             st.markdown('</div>', unsafe_allow_html=True)
 
-with tabs[2]:
+if active_view == "Availability":
     st.markdown('<div class="section-title">Availability</div>', unsafe_allow_html=True)
     st.caption("Next available date for active work, and next available date if on hold backlog is scheduled after active work")
 
