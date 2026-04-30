@@ -1714,6 +1714,33 @@ def prepare_jobs_editor_df(df: pd.DataFrame) -> pd.DataFrame:
     out["Due date"] = due_dates.where(pd.notna(due_dates), None)
     return out
 
+def jobs_editor_source_signature(df: pd.DataFrame) -> str:
+    out = prepare_jobs_editor_df(df)
+    rows: list[tuple] = []
+    for row in out.to_dict(orient="records"):
+        due = _safe_date(row.get("Due date"))
+        req = row.get("Required hours")
+        prio = row.get("Priority")
+        rows.append(
+            (
+                str(row.get("Job name", "") or ""),
+                None if pd.isna(req) else float(req),
+                None if pd.isna(prio) else int(float(prio)),
+                str(row.get("Assignee", "") or ""),
+                None if due is None else due.isoformat(),
+                str(row.get("Notes", "") or ""),
+            )
+        )
+    payload = repr(rows).encode("utf-8")
+    return hashlib.sha1(payload).hexdigest()
+
+def reset_editor_state_if_source_changed(editor_key: str, df: pd.DataFrame) -> None:
+    source_sig_key = f"{editor_key}__source_sig"
+    source_sig = jobs_editor_source_signature(df)
+    if st.session_state.get(source_sig_key) != source_sig:
+        st.session_state.pop(editor_key, None)
+        st.session_state[source_sig_key] = source_sig
+
 def clean_jobs_df(df: pd.DataFrame) -> pd.DataFrame:
     df = prepare_jobs_editor_df(df)
     if df.empty:
@@ -2021,8 +2048,10 @@ with tabs[0]:
         ),
         unsafe_allow_html=True,
     )
+    jobs_editor_df = prepare_jobs_editor_df(st.session_state.get("jobs_raw", pd.DataFrame(columns=JOB_COLS)))
+    reset_editor_state_if_source_changed("jobs_editor", jobs_editor_df)
     jobs_input = st.data_editor(
-        prepare_jobs_editor_df(st.session_state.get("jobs_raw", pd.DataFrame(columns=JOB_COLS))),
+        jobs_editor_df,
         num_rows="dynamic",
         use_container_width=True,
         hide_index=True,
@@ -2399,6 +2428,7 @@ with tabs[1]:
         total_count_staff = int(len(member_jobs_clean))
 
         editor_key = f"member_jobs_editor_{selected_member}"
+        reset_editor_state_if_source_changed(editor_key, member_jobs)
         st.markdown('<div class="table-shell">', unsafe_allow_html=True)
         st.markdown(
             (
